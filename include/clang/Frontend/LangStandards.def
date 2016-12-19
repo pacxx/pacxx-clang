@@ -163,6 +163,12 @@ LANGSTANDARD(cuda, "cuda",
              "NVIDIA CUDA(tm)",
              LineComment | CPlusPlus | Digraphs)
 
+// PACXX
+LANGSTANDARD(pacxx, "pacxx",
+             "Programming Accelerators with C++",
+             LineComment | CPlusPlus | CPlusPlus11 | CPlusPlus14 | CPlusPlus1z | 
+             Digraphs | HexFloat)
+
 #undef LANGSTANDARD
 #undef LANGSTANDARD_ALIAS
 

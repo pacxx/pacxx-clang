@@ -245,6 +245,7 @@ def COnly : LangOpt<"CPlusPlus", 1>;
 def CPlusPlus : LangOpt<"CPlusPlus">;
 def OpenCL : LangOpt<"OpenCL">;
 def RenderScript : LangOpt<"RenderScript">;
+def PACXX : LangOpt<"PACXX">;
 
 // Defines targets for target-specific attributes. The list of strings should
 // specify architectures for which the target applies, based off the ArchType
@@ -2448,3 +2449,52 @@ def InternalLinkage : InheritableAttr {
   let Subjects = SubjectList<[Var, Function, CXXRecord]>;
   let Documentation = [InternalLinkageDocs];
 }
+
+
+def PACXXDevice : InheritableAttr {
+  let Spellings = [CXX11<"", "device", 201309>];
+  let LangOpts = [PACXX];
+  let Subjects = SubjectList<[Var]>;
+  let Documentation = [Undocumented];
+}
+
+def PACXXConstant : InheritableAttr {
+  let Spellings = [CXX11<"", "constant", 201309>];
+  let LangOpts = [PACXX];
+  let Subjects = SubjectList<[Var]>;
+  let Documentation = [Undocumented];
+}
+
+def PACXXKernel : Attr {
+  let Spellings = [CXX11<"", "kernel", 201309>];
+  let LangOpts = [PACXX];
+  let Args = [VariadicExprArgument<"Args">];
+  let Documentation = [Undocumented];
+}
+
+def PACXXReflection : Attr {
+  let Spellings = [CXX11<"", "reflect", 201309>];
+  let LangOpts = [PACXX];
+  let Args = [VariadicExprArgument<"Args">];
+  let Documentation = [Undocumented];
+}
+
+def PACXXKernelCall : Attr {
+  let Spellings = [CXX11<"", "kernel_call", 201309>];
+  let LangOpts = [PACXX];
+  let Args = [VariadicExprArgument<"Args">];
+  let Documentation = [Undocumented];
+}
+
+def PACXXShared : InheritableAttr {
+  let Spellings = [CXX11<"", "shared", 201309>];
+  let Subjects = SubjectList<[Var]>;
+  let Documentation = [Undocumented];
+}
+
+def PACXXDump : InheritableAttr {
+  let Spellings = [CXX11<"pacxx", "dump", 201309>];
+  let LangOpts = [PACXX];
+  let Documentation = [Undocumented];
+}
+

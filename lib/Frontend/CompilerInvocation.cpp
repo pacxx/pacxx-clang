@@ -1328,6 +1328,7 @@ static InputKind ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
       .Case("c", IK_C)
       .Case("cl", IK_OpenCL)
       .Case("cuda", IK_CUDA)
+      .Case("pacxx", IK_CXX)
       .Case("c++", IK_CXX)
       .Case("c++-module", IK_CXX)
       .Case("objective-c", IK_ObjC)
@@ -1623,6 +1624,10 @@ void CompilerInvocation::setLangDefaults(LangOptions &Opts, InputKind IK,
   Opts.CUDA = IK == IK_CUDA || IK == IK_PreprocessedCuda ||
               LangStd == LangStandard::lang_cuda;
 
+  Opts.PACXX = LangStd == LangStandard::lang_pacxx;
+  
+  // PACXX_TODO: add PACXX.h to PPOpts.Includes
+  
   Opts.RenderScript = IK == IK_RenderScript;
   if (Opts.RenderScript) {
     Opts.NativeHalfType = 1;

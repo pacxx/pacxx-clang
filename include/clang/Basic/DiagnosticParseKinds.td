@@ -740,6 +740,8 @@ def err_alias_declaration_not_identifier : Error<
   "name defined in alias declaration must be an identifier">;
 def err_alias_declaration_specialization : Error<
   "%select{partial specialization|explicit specialization|explicit instantiation}0 of alias templates is not permitted">;
+def err_alias_declaration_pack_expansion : Error<
+  "alias declaration cannot be a pack expansion">;
 
 // C++1z using-declaration pack expansions
 def ext_multi_using_declaration : ExtWarn<
@@ -749,6 +751,11 @@ def warn_cxx1z_compat_multi_using_declaration : Warning<
   "use of multiple declarators in a single using declaration is "
   "incompatible with C++ standards before C++1z">,
   InGroup<CXXPre1zCompat>, DefaultIgnore;
+def ext_using_declaration_pack : ExtWarn<
+  "pack expansion of using declaration is a C++1z extension">, InGroup<CXX1z>;
+def warn_cxx1z_compat_using_declaration_pack : Warning<
+  "pack expansion using declaration is incompatible with C++ standards "
+  "before C++1z">, InGroup<CXXPre1zCompat>, DefaultIgnore;
 
 // C++11 override control
 def ext_override_control_keyword : ExtWarn<
@@ -968,8 +975,10 @@ def err_opencl_unroll_hint_on_non_loop : Error<
 // OpenCL EXTENSION pragma (OpenCL 1.1 [9.1])
 def warn_pragma_expected_colon : Warning<
   "missing ':' after %0 - ignoring">, InGroup<IgnoredPragmas>;
-def warn_pragma_expected_enable_disable : Warning<
-  "expected 'enable' or 'disable' - ignoring">, InGroup<IgnoredPragmas>;
+def warn_pragma_expected_predicate : Warning<
+  "expected %select{'enable', 'disable', 'begin' or 'end'|'disable'}0 - ignoring">, InGroup<IgnoredPragmas>;
+def warn_pragma_begin_end_mismatch : Warning<
+  "OpenCL extension end directive mismatches begin directive - ignoring">, InGroup<IgnoredPragmas>;
 def warn_pragma_unknown_extension : Warning<
   "unknown OpenCL extension %0 - ignoring">, InGroup<IgnoredPragmas>;
 def warn_pragma_unsupported_extension : Warning<

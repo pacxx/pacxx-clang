@@ -398,7 +398,7 @@ def err_objc_expected_selector_for_getter_setter : Error<
   "expected selector for Objective-C %select{setter|getter}0">;
 def err_objc_property_requires_field_name : Error<
   "property requires fields to be named">;
-def err_objc_property_bitfield : Error<"property name cannot be a bitfield">;
+def err_objc_property_bitfield : Error<"property name cannot be a bit-field">;
 def err_objc_expected_property_attr : Error<"unknown property attribute %0">;
 def err_objc_properties_require_objc2 : Error<
   "properties are an Objective-C 2 feature">;
@@ -726,7 +726,7 @@ def warn_cxx98_compat_nonstatic_member_init : Warning<
   "in-class initialization of non-static data members is incompatible with C++98">,
   InGroup<CXX98Compat>, DefaultIgnore;
 def err_bitfield_member_init: Error<
-  "bitfield member cannot have an in-class initializer">;
+  "bit-field member cannot have an in-class initializer">;
 def err_incomplete_array_member_init: Error<
   "array bound cannot be deduced from an in-class initializer">;
 
@@ -740,8 +740,6 @@ def err_alias_declaration_not_identifier : Error<
   "name defined in alias declaration must be an identifier">;
 def err_alias_declaration_specialization : Error<
   "%select{partial specialization|explicit specialization|explicit instantiation}0 of alias templates is not permitted">;
-def err_alias_declaration_pack_expansion : Error<
-  "alias declaration cannot be a pack expansion">;
 
 // C++1z using-declaration pack expansions
 def ext_multi_using_declaration : ExtWarn<
@@ -751,11 +749,6 @@ def warn_cxx1z_compat_multi_using_declaration : Warning<
   "use of multiple declarators in a single using declaration is "
   "incompatible with C++ standards before C++1z">,
   InGroup<CXXPre1zCompat>, DefaultIgnore;
-def ext_using_declaration_pack : ExtWarn<
-  "pack expansion of using declaration is a C++1z extension">, InGroup<CXX1z>;
-def warn_cxx1z_compat_using_declaration_pack : Warning<
-  "pack expansion using declaration is incompatible with C++ standards "
-  "before C++1z">, InGroup<CXXPre1zCompat>, DefaultIgnore;
 
 // C++11 override control
 def ext_override_control_keyword : ExtWarn<

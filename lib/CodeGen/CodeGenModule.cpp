@@ -2396,6 +2396,23 @@ CharUnits CodeGenModule::GetTargetTypeStoreSize(llvm::Type *Ty) const {
       getDataLayout().getTypeStoreSizeInBits(Ty));
 }
 
+static
+unsigned GetPACXXGlobalVarAddressSpace(const VarDecl *D,
+                                       unsigned AddrSpace) {
+  if (D) {
+    if (D->hasAttr<PACXXConstantAttr>())
+      AddrSpace = 4;
+    else if (D->hasAttr<PACXXSharedAttr>())
+      AddrSpace = 3;
+    else if (D->hasAttr<PACXXDeviceAttr>())
+      AddrSpace = 1;
+    else 
+      AddrSpace = 0; 
+  }
+
+  return AddrSpace;
+}
+
 unsigned CodeGenModule::GetGlobalVarAddressSpace(const VarDecl *D,
                                                  unsigned AddrSpace) {
   if (D && LangOpts.CUDA && LangOpts.CUDAIsDevice) {
@@ -2406,6 +2423,8 @@ unsigned CodeGenModule::GetGlobalVarAddressSpace(const VarDecl *D,
     else
       AddrSpace = getContext().getTargetAddressSpace(LangAS::cuda_device);
   }
+  else if (LangOpts.PACXX) 
+    AddrSpace =  GetPACXXGlobalVarAddressSpace(D, AddrSpace);
 
   return AddrSpace;
 }
@@ -2495,9 +2514,9 @@ void CodeGenModule::EmitGlobalVarDefinition(const VarDecl *D,
   // CUDA E.2.4.1 "__shared__ variables cannot have an initialization
   // as part of their declaration."  Sema has already checked for
   // error cases, so we just need to set Init to UndefValue.
-  if (getLangOpts().CUDA && getLangOpts().CUDAIsDevice &&
-      D->hasAttr<CUDASharedAttr>())
-    Init = llvm::UndefValue::get(getTypes().ConvertType(ASTTy));
+  if ((getLangOpts().CUDA && getLangOpts().CUDAIsDevice &&
+      D->hasAttr<CUDASharedAttr>()) || (getLangOpts().PACXX && D->hasAttr<PACXXSharedAttr>())){
+    Init = llvm::UndefValue::get(getTypes().ConvertType(ASTTy)); D->dump();}
   else if (!InitExpr) {
     // This is a tentative definition; tentative definitions are
     // implicitly initialized with { 0 }.

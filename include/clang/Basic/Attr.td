@@ -1,4 +1,4 @@
-//==--- Attr.td - attribute definitions -----------------------------------===//
+//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -2468,6 +2468,7 @@ def PACXXConstant : InheritableAttr {
 def PACXXKernel : Attr {
   let Spellings = [CXX11<"", "kernel", 201309>];
   let LangOpts = [PACXX];
+  let Subjects = SubjectList<[Function]>;
   let Args = [VariadicExprArgument<"Args">];
   let Documentation = [Undocumented];
 }
@@ -2475,13 +2476,7 @@ def PACXXKernel : Attr {
 def PACXXReflection : Attr {
   let Spellings = [CXX11<"", "reflect", 201309>];
   let LangOpts = [PACXX];
-  let Args = [VariadicExprArgument<"Args">];
-  let Documentation = [Undocumented];
-}
-
-def PACXXKernelCall : Attr {
-  let Spellings = [CXX11<"", "kernel_call", 201309>];
-  let LangOpts = [PACXX];
+  let Subjects = SubjectList<[Function]>;
   let Args = [VariadicExprArgument<"Args">];
   let Documentation = [Undocumented];
 }
@@ -2495,6 +2490,7 @@ def PACXXShared : InheritableAttr {
 def PACXXDump : InheritableAttr {
   let Spellings = [CXX11<"pacxx", "dump", 201309>];
   let LangOpts = [PACXX];
+  let Subjects = SubjectList<[Function]>;
   let Documentation = [Undocumented];
 }
 

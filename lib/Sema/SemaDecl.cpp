@@ -6354,6 +6354,21 @@ NamedDecl *Sema::ActOnVariableDeclarator(
     }
   }
 
+  // PACXX MOD
+  if (getLangOpts().PACXX) {
+    if (EmitTLSUnsupportedError && DeclAttrsMatchCUDAMode(getLangOpts(), NewVD))
+      Diag(D.getDeclSpec().getThreadStorageClassSpecLoc(),
+           diag::err_thread_unsupported);
+    // PACXX: [[shared]] and [[constan]] variables have implied static
+    // storage [duration] to stay compatible with CUDA
+    if (SC == SC_None && S->getFnParent() != nullptr &&
+        (NewVD->hasAttr<PACXXSharedAttr>() ||
+         NewVD->hasAttr<PACXXConstantAttr>())) {
+      NewVD->setStorageClass(SC_Static);
+    }
+  }
+
+
   // Ensure that dllimport globals without explicit storage class are treated as
   // extern. The storage class is set above using parsed attributes. Now we can
   // check the VarDecl itself.

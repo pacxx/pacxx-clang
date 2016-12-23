@@ -494,7 +494,7 @@ static void GenOpenCLArgMetadata(const FunctionDecl *FD, llvm::Function *Fn,
   // the same number of values as their are kernel arguments.
 
   const PrintingPolicy &Policy = ASTCtx.getPrintingPolicy();
-
+  
   // MDNode for the kernel argument address space qualifiers.
   SmallVector<llvm::Metadata *, 8> addressQuals;
 
@@ -650,7 +650,7 @@ static void GenOpenCLArgMetadata(const FunctionDecl *FD, llvm::Function *Fn,
 void CodeGenFunction::EmitOpenCLKernelMetadata(const FunctionDecl *FD,
                                                llvm::Function *Fn)
 {
-  if (!FD->hasAttr<OpenCLKernelAttr>())
+  if (!FD->hasAttr<OpenCLKernelAttr>() && !FD->hasAttr<PACXXKernelAttr>())
     return;
 
   llvm::LLVMContext &Context = getLLVMContext();
@@ -688,6 +688,47 @@ void CodeGenFunction::EmitOpenCLKernelMetadata(const FunctionDecl *FD,
     Fn->setMetadata("reqd_work_group_size", llvm::MDNode::get(Context, attrMDArgs));
   }
 }
+
+void CodeGenFunction::EmitPACXXKernelMetadata(const FunctionDecl *FD,
+                                              llvm::Function *Fn)
+{
+  if (FD->hasAttr<PACXXKernelAttr>()) {
+    llvm::Module *M = Fn->getParent();
+    llvm::LLVMContext &Ctx = M->getContext();
+
+    // Get "nvvm.annotations" metadata node
+    llvm::NamedMDNode *MD = M->getOrInsertNamedMetadata("nvvm.annotations");
+
+    // Create !{<func-ref>, metadata !"kernel", i32 1} node
+    llvm::SmallVector<llvm::Metadata *, 3> MDVals;
+    MDVals.push_back(llvm::ConstantAsMetadata::get(Fn));
+    MDVals.push_back(llvm::MDString::get(Ctx, "kernel"));
+    MDVals.push_back(llvm::ConstantAsMetadata::get(
+      llvm::ConstantInt::get(llvm::Type::getInt32Ty(Ctx), 1)));
+
+    // Append metadata to nvvm.annotations
+    MD->addOperand(llvm::MDNode::get(Ctx, MDVals));
+    MDVals.clear();
+    
+    // Emit OpenCL Metadata for SPIR
+    EmitOpenCLKernelMetadata(FD, Fn); 
+  }
+  if (FD->hasAttr<PACXXReflectionAttr>()) {
+    llvm::Module *M = Fn->getParent();
+    llvm::LLVMContext &Ctx = M->getContext();
+
+    llvm::NamedMDNode *MD = M->getOrInsertNamedMetadata("pacxx.reflection");
+    llvm::SmallVector<llvm::Metadata *, 3> MDVals;
+    MDVals.push_back(llvm::ValueAsMetadata::get(Fn));
+    MDVals.push_back(llvm::MDString::get(Ctx, "call"));
+    MDVals.push_back(llvm::ConstantAsMetadata::get(
+      llvm::ConstantInt::get(llvm::Type::getInt32Ty(Ctx), -1)));
+
+    // Append metadata to pacxx.reflection
+    MD->addOperand(llvm::MDNode::get(Ctx, MDVals));
+  }
+}
+
 
 /// Determine whether the function F ends with a return stmt.
 static bool endsWithReturn(const Decl* F) {
@@ -806,6 +847,13 @@ void CodeGenFunction::StartFunction(GlobalDecl GD,
     if (const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(D))
       EmitOpenCLKernelMetadata(FD, Fn);
   }
+
+  if (getLangOpts().PACXX) {
+    // Add metadata for a PACXX kernel function.
+    if (const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(D))
+      EmitPACXXKernelMetadata(FD, Fn);
+  }
+
 
   // If we are checking function types, emit a function type signature as
   // prologue data.

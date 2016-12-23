@@ -1354,6 +1354,12 @@ private:
   void EmitOpenCLKernelMetadata(const FunctionDecl *FD, 
                                 llvm::Function *Fn);
 
+  /// PACXX Mod - Emit Metadata to identify kernels
+  void EmitPACXXKernelMetadata(const FunctionDecl *FD, 
+                                llvm::Function *Fn);
+
+
+
 public:
   CodeGenFunction(CodeGenModule &cgm, bool suppressNewContext=false);
   ~CodeGenFunction();

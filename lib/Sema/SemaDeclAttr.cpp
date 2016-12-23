@@ -6048,6 +6048,23 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
   case AttributeList::AT_XRayInstrument:
     handleSimpleAttribute<XRayInstrumentAttr>(S, D, Attr);
     break;
+  // PACXX attributes.
+  case AttributeList::AT_PACXXKernel:
+    handleSimpleAttribute<PACXXKernelAttr>(S, D, Attr);
+    break;
+  case AttributeList::AT_PACXXShared:
+    handleSimpleAttribute<PACXXSharedAttr>(S, D, Attr);
+    break;
+  case AttributeList::AT_PACXXConstant:
+    handleSimpleAttribute<PACXXConstantAttr>(S, D, Attr);
+    break;
+  case AttributeList::AT_PACXXReflection:
+    handleSimpleAttribute<PACXXReflectionAttr>(S, D, Attr);
+    break;
+  case AttributeList::AT_PACXXDump:
+        handleSimpleAttribute<PACXXDumpAttr>(S, D, Attr);
+        break;
+
   }
 }
 

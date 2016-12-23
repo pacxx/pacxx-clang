@@ -474,6 +474,8 @@ def err_using_decl_conflict : Error<
 def err_using_decl_conflict_reverse : Error<
   "declaration conflicts with target of using declaration already in scope">;
 def note_using_decl : Note<"%select{|previous }0using declaration">;
+def err_using_decl_redeclaration_expansion : Error<
+  "using declaration pack expansion at block scope produces multiple values">;
 
 def warn_access_decl_deprecated : Warning<
   "access declarations are deprecated; use using declarations instead">,
@@ -2297,6 +2299,9 @@ def warn_attribute_pointers_only : Warning<
   "%0 attribute only applies to%select{| constant}1 pointer arguments">,
   InGroup<IgnoredAttributes>;
 def err_attribute_pointers_only : Error<warn_attribute_pointers_only.Text>;
+def err_attribute_integers_only : Error<
+  "%0 attribute argument may only refer to a function parameter of integer "
+  "type">;
 def warn_attribute_return_pointers_only : Warning<
   "%0 attribute only applies to return values that are pointers">,
   InGroup<IgnoredAttributes>;
@@ -3313,18 +3318,18 @@ def note_ovl_candidate : Note<"candidate "
     "is the implicit copy assignment operator|"
     "is the implicit move assignment operator|"
     "inherited constructor|"
-    "inherited constructor }0%1"
-    "%select{| has different class%diff{ (expected $ but has $)|}3,4"
-    "| has different number of parameters (expected %3 but has %4)"
-    "| has type mismatch at %ordinal3 parameter"
-    "%diff{ (expected $ but has $)|}4,5"
-    "| has different return type%diff{ ($ expected but has $)|}3,4"
+    "inherited constructor }0%2"
+    "%select{| has different class%diff{ (expected $ but has $)|}4,5"
+    "| has different number of parameters (expected %4 but has %5)"
+    "| has type mismatch at %ordinal4 parameter"
+    "%diff{ (expected $ but has $)|}5,6"
+    "| has different return type%diff{ ($ expected but has $)|}4,5"
     "| has different qualifiers (expected "
     "%select{none|const|restrict|const and restrict|volatile|const and volatile"
-    "|volatile and restrict|const, volatile, and restrict}3 but found "
+    "|volatile and restrict|const, volatile, and restrict}4 but found "
     "%select{none|const|restrict|const and restrict|volatile|const and volatile"
-    "|volatile and restrict|const, volatile, and restrict}4)"
-    "| has different exception specification}2">;
+    "|volatile and restrict|const, volatile, and restrict}5)"
+    "| has different exception specification}3">;
 
 def note_ovl_candidate_inherited_constructor : Note<
     "constructor from base class %0 inherited here">;
@@ -3338,6 +3343,10 @@ def note_ovl_candidate_incomplete_deduction : Note<"candidate template ignored: 
 def note_ovl_candidate_inconsistent_deduction : Note<
     "candidate template ignored: deduced conflicting %select{types|values|"
     "templates}0 for parameter %1%diff{ ($ vs. $)|}2,3">;
+def note_ovl_candidate_inconsistent_deduction_types : Note<
+    "candidate template ignored: deduced values %diff{"
+    "of conflicting types for parameter %0 (%1 of type $ vs. %3 of type $)|"
+    "%1 and %3 of conflicting types for parameter %0}2,4">;
 def note_ovl_candidate_explicit_arg_mismatch_named : Note<
     "candidate template ignored: invalid explicitly-specified argument "
     "for template parameter %0">;
@@ -3835,7 +3844,7 @@ def err_non_type_template_parm_type_deduction_failure : Error<
   "non-type template parameter %0 with type %1 has incompatible initializer of type %2">;
 def err_deduced_non_type_template_arg_type_mismatch : Error<
   "deduced non-type template argument does not have the same type as the "
-  "its corresponding template parameter%diff{ ($ vs $)|}0,1">;
+  "corresponding template parameter%diff{ ($ vs $)|}0,1">;
 def err_non_type_template_arg_subobject : Error<
   "non-type template argument refers to subobject '%0'">;
 def err_non_type_template_arg_addr_label_diff : Error<
@@ -4071,7 +4080,7 @@ def err_function_template_spec_ambiguous : Error<
     "function template; explicitly specify%select{| additional}1 template "
     "arguments to identify a particular function template">;
 def note_function_template_spec_matched : Note<
-    "function template matches specialization %0">;
+    "function template %q0 matches specialization %1">;
 def err_function_template_partial_spec : Error<
     "function template partial specialization is not allowed">;
 
@@ -4155,6 +4164,9 @@ def err_variable_instantiates_to_function : Error<
 def err_nested_name_spec_non_tag : Error<
   "type %0 cannot be used prior to '::' because it has no members">;
 
+def err_using_pack_expansion_empty : Error<
+  "%select{|member}0 using declaration %1 instantiates to an empty pack">;
+
 // C++ Explicit Instantiation
 def err_explicit_instantiation_duplicate : Error<
     "duplicate explicit instantiation of %0">;
@@ -4206,7 +4218,7 @@ def err_explicit_instantiation_member_function_not_instantiated : Error<
 def err_explicit_instantiation_ambiguous : Error<
   "partial ordering for explicit instantiation of %0 is ambiguous">;
 def note_explicit_instantiation_candidate : Note<
-  "explicit instantiation candidate function template here %0">;
+  "explicit instantiation candidate function %q0 template here %1">;
 def err_explicit_instantiation_inline : Error<
   "explicit instantiation cannot be 'inline'">;
 def warn_explicit_instantiation_inline_0x : Warning<

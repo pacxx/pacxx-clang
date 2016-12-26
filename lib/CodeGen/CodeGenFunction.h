@@ -1402,6 +1402,7 @@ public:
 
   llvm::BasicBlock *getInvokeDest() {
     if (!EHStack.requiresLandingPad()) return nullptr;
+    if (CGM.getLangOpts().PACXX) return nullptr;
     return getInvokeDestImpl();
   }
 

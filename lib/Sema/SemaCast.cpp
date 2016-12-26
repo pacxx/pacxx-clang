@@ -282,11 +282,30 @@ Sema::BuildCXXNamedCast(SourceLocation OpLoc, tok::TokenKind Kind,
         return ExprError();
       DiscardMisalignedMemberAddress(DestType.getTypePtr(), E);
     }
-    return Op.complete(CXXReinterpretCastExpr::Create(Context, Op.ResultType,
+    auto CastExpr = CXXReinterpretCastExpr::Create(Context, Op.ResultType,
                                     Op.ValueKind, Op.Kind, Op.SrcExpr.get(),
                                                       nullptr, DestTInfo, OpLoc,
                                                       Parens.getEnd(),
-                                                      AngleBrackets));
+                                                      AngleBrackets);
+    //PACXX MOD: We allow reinterpr_cast to cast between different address spaces when 
+    //compiling for device
+    if (getLangOpts().PACXX) {
+      if (auto SubExpr = CastExpr->getSubExpr()) {
+        auto T = SubExpr->getType();
+        if (auto PType = T->getAs<PointerType>()) {
+          auto AS = PType->getPointeeType().getAddressSpace();
+          if (CastExpr->getType().getAddressSpace() != AS){
+            if (
+            (CastExpr->getCastKind() == CK_BitCast || CastExpr->getCastKind() == CK_NoOp)) {
+            CastExpr->setCastKind(CK_AddressSpaceConversion);
+          }
+        //  else CastExpr->dump();
+         }
+       }
+     }
+   }
+   
+   return Op.complete(CastExpr); 
   }
   case tok::kw_static_cast: {
     if (!TypeDependent) {

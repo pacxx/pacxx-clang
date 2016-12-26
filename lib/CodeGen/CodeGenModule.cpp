@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "CodeGenModule.h"
+#include "CodeGenPACXX.h"
 #include "CGBlocks.h"
 #include "CGCUDARuntime.h"
 #include "CGCXXABI.h"
@@ -951,6 +952,12 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
       B.addAttribute(llvm::Attribute::MinSize);
   }
 
+  // PACXX MOD: kernels and reflection calls are never inlined by the standard
+  // llvm inline pass
+  if (D->hasAttr<PACXXKernelAttr>()) {
+    B.addAttribute(llvm::Attribute::NoInline);
+  }
+
   F->addAttributes(llvm::AttributeSet::FunctionIndex,
                    llvm::AttributeSet::get(
                        F->getContext(), llvm::AttributeSet::FunctionIndex, B));
@@ -966,6 +973,11 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
   if (getTarget().getCXXABI().areMemberFunctionsAligned()) {
     if (F->getAlignment() < 2 && isa<CXXMethodDecl>(D))
       F->setAlignment(2);
+  }
+
+  if (D->hasAttr<PACXXKernelAttr>()) {
+    F->setLinkage(llvm::GlobalValue::LinkageTypes::ExternalLinkage);
+    F->setVisibility(llvm::GlobalValue::VisibilityTypes::DefaultVisibility);
   }
 
   // In the cross-dso CFI mode, we want !type attributes on definitions only.
@@ -3019,7 +3031,14 @@ void CodeGenModule::HandleCXXStaticMemberVarInstantiation(VarDecl *VD) {
 
 void CodeGenModule::EmitGlobalFunctionDefinition(GlobalDecl GD,
                                                  llvm::GlobalValue *GV) {
+
   const auto *D = cast<FunctionDecl>(GD.getDecl());
+  
+  // PACXX MOD: check kernel 
+  if (getLangOpts().PACXX) {
+    pacxx::KernelVisitor V; 
+    V.StartFromFunctionDecl(D); 
+  }
 
   // Compute the function info and LLVM type.
   const CGFunctionInfo &FI = getTypes().arrangeGlobalDeclaration(GD);

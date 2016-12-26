@@ -6655,10 +6655,12 @@ public:
     DAR_FailedAlreadyDiagnosed
   };
 
-  DeduceAutoResult DeduceAutoType(TypeSourceInfo *AutoType, Expr *&Initializer,
-                                  QualType &Result);
-  DeduceAutoResult DeduceAutoType(TypeLoc AutoTypeLoc, Expr *&Initializer,
-                                  QualType &Result);
+  DeduceAutoResult
+  DeduceAutoType(TypeSourceInfo *AutoType, Expr *&Initializer, QualType &Result,
+                 Optional<unsigned> DependentDeductionDepth = None);
+  DeduceAutoResult
+  DeduceAutoType(TypeLoc AutoTypeLoc, Expr *&Initializer, QualType &Result,
+                 Optional<unsigned> DependentDeductionDepth = None);
   void DiagnoseAutoDeductionFailure(VarDecl *VDecl, Expr *Init);
   bool DeduceReturnType(FunctionDecl *FD, SourceLocation Loc,
                         bool Diagnose = true);
@@ -6749,7 +6751,7 @@ public:
       /// We are substituting template argument determined as part of
       /// template argument deduction for either a class template
       /// partial specialization or a function template. The
-      /// Entity is either a ClassTemplatePartialSpecializationDecl or
+      /// Entity is either a {Class|Var}TemplatePartialSpecializationDecl or
       /// a FunctionTemplateDecl.
       DeducedTemplateArgumentSubstitution,
 
@@ -8471,6 +8473,12 @@ public:
                                              Stmt *AStmt,
                                              SourceLocation StartLoc,
                                              SourceLocation EndLoc);
+  /// Called on well-formed '\#pragma omp target teams distribute' after parsing
+  /// of the associated statement.
+  StmtResult ActOnOpenMPTargetTeamsDistributeDirective(
+      ArrayRef<OMPClause *> Clauses, Stmt *AStmt, SourceLocation StartLoc,
+      SourceLocation EndLoc,
+      llvm::DenseMap<ValueDecl *, Expr *> &VarsWithImplicitDSA);
 
   /// Checks correctness of linear modifiers.
   bool CheckOpenMPLinearModifier(OpenMPLinearClauseKind LinKind,

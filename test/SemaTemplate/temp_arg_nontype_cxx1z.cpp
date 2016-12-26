@@ -175,14 +175,33 @@ namespace Auto {
 
     // pointers
     template<auto v>    class B { };
-    template<auto* p>   class B<p> { };
+    template<auto* p>   class B<p> { }; // expected-note {{matches}}
     template<auto** pp> class B<pp> { };
-    template<auto* p0>   int &f(B<p0> b);
-    template<auto** pp0> float &f(B<pp0> b);
+    template<auto* p0>   int &f(B<p0> b); // expected-note {{candidate}}
+    template<auto** pp0> float &f(B<pp0> b); // expected-note {{candidate}}
 
     int a, *b = &a;
     int &r = f(B<&a>());
     float &s = f(B<&b>());
+
+    // pointers to members
+    template<typename T, auto *T::*p> struct B<p> {};
+    template<typename T, auto **T::*p> struct B<p> {};
+    template<typename T, auto *T::*p0>   char &f(B<p0> b); // expected-note {{candidate}}
+    template<typename T, auto **T::*pp0> short &f(B<pp0> b); // expected-note {{candidate}}
+
+    struct X { int n; int *p; int **pp; typedef int a, b; };
+    auto t = f(B<&X::n>()); // expected-error {{no match}}
+    char &u = f(B<&X::p>());
+    short &v = f(B<&X::pp>());
+
+    // A case where we need to do auto-deduction, and check whether the
+    // resulting dependent types match during partial ordering. These
+    // templates are not ordered due to the mismatching function parameter.
+    template<typename T, auto *(*f)(T, typename T::a)> struct B<f> {}; // expected-note {{matches}}
+    template<typename T, auto **(*f)(T, typename T::b)> struct B<f> {}; // expected-note {{matches}}
+    int **g(X, int);
+    B<&g> bg; // expected-error {{ambiguous}}
   }
 
   namespace Chained {
@@ -231,6 +250,23 @@ namespace Auto {
   }
 
   namespace Decomposition {
+    // Types of deduced non-type template arguments must match exactly, so
+    // partial ordering fails in both directions here.
+    template<auto> struct Any;
+    template<int N> struct Any<N> { typedef int Int; }; // expected-note 3{{match}}
+    template<short N> struct Any<N> { typedef int Short; }; // expected-note 3{{match}}
+    Any<0>::Int is_int; // expected-error {{ambiguous}}
+    Any<(short)0>::Short is_short; // expected-error {{ambiguous}}
+    Any<(char)0>::Short is_char; // expected-error {{ambiguous}}
+
+    template<int, auto> struct NestedAny;
+    template<auto N> struct NestedAny<0, N>; // expected-note 3{{match}}
+    template<int N> struct NestedAny<0, N> { typedef int Int; }; // expected-note 3{{match}}
+    template<short N> struct NestedAny<0, N> { typedef int Short; }; // expected-note 3{{match}}
+    NestedAny<0, 0>::Int nested_int; // expected-error {{ambiguous}}
+    NestedAny<0, (short)0>::Short nested_short; // expected-error {{ambiguous}}
+    NestedAny<0, (char)0>::Short nested_char; // expected-error {{ambiguous}}
+
     double foo(int, bool);
     template<auto& f> struct fn_result_type;
 

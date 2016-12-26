@@ -2702,6 +2702,8 @@ public:
   void EmitOMPTeamsDistributeParallelForDirective(
       const OMPTeamsDistributeParallelForDirective &S);
   void EmitOMPTargetTeamsDirective(const OMPTargetTeamsDirective &S);
+  void EmitOMPTargetTeamsDistributeDirective(
+      const OMPTargetTeamsDistributeDirective &S);
 
   /// Emit outlined function for the target directive.
   static std::pair<llvm::Function * /*OutlinedFn*/,

@@ -7810,6 +7810,82 @@ void XCoreTargetCodeGenInfo::emitTargetMD(const Decl *D, llvm::GlobalValue *GV,
     MD->addOperand(llvm::MDNode::get(Ctx, MDVals));
   }
 }
+//===----------------------------------------------------------------------===//
+// PACXX Offloading ABI Implementation
+//===----------------------------------------------------------------------===//
+namespace {
+class PACXXABIInfo : public ABIInfo {
+public:
+  PACXXABIInfo(CodeGenTypes &CGT) : ABIInfo(CGT) {}
+
+  ABIArgInfo classifyReturnType(QualType RetTy) const;
+  ABIArgInfo classifyArgumentType(QualType Ty) const;
+
+  void computeInfo(CGFunctionInfo &FI) const override;
+  Address EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
+                    QualType Ty) const override;
+};
+
+class PACXXTargetCodeGenInfo : public TargetCodeGenInfo {
+public:
+  PACXXTargetCodeGenInfo(CodeGenTypes &CGT)
+      : TargetCodeGenInfo(new PACXXABIInfo(CGT)) {}
+
+  void setTargetAttributes(const Decl *D, llvm::GlobalValue *GV,
+                           CodeGen::CodeGenModule &CGM) const override;
+
+
+};
+
+ABIArgInfo PACXXABIInfo::classifyReturnType(QualType RetTy) const {
+  if (RetTy->isVoidType())
+    return ABIArgInfo::getIgnore();
+
+  // note: this is different from default ABI
+  if (!RetTy->isScalarType())
+    return ABIArgInfo::getDirect();
+
+  // Treat an enum type as its underlying type.
+  if (const EnumType *EnumTy = RetTy->getAs<EnumType>())
+    RetTy = EnumTy->getDecl()->getIntegerType();
+
+  return (RetTy->isPromotableIntegerType() ? ABIArgInfo::getExtend()
+                                           : ABIArgInfo::getDirect());
+}
+
+ABIArgInfo PACXXABIInfo::classifyArgumentType(QualType Ty) const {
+  // Treat an enum type as its underlying type.
+  if (const EnumType *EnumTy = Ty->getAs<EnumType>())
+    Ty = EnumTy->getDecl()->getIntegerType();
+
+  return (Ty->isPromotableIntegerType() ? ABIArgInfo::getExtend()
+                                        : ABIArgInfo::getDirect());
+}
+
+void PACXXABIInfo::computeInfo(CGFunctionInfo &FI) const {
+
+  if (!getCXXABI().classifyReturnType(FI))
+    FI.getReturnInfo() = classifyReturnType(FI.getReturnType());
+  for (auto &I : FI.arguments())
+    I.info = classifyArgumentType(I.type);
+
+  // Always honor user-specified calling convention.
+  if (FI.getCallingConvention() != llvm::CallingConv::C)
+    return;
+
+  FI.setEffectiveCallingConvention(getRuntimeCC());
+}
+
+Address PACXXABIInfo::EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
+                                QualType Ty) const {
+  llvm_unreachable("Eighter SPIR nor NVVM IR have support for varargs");
+}
+
+void PACXXTargetCodeGenInfo::setTargetAttributes(const Decl *D, llvm::GlobalValue *GV,
+                           CodeGen::CodeGenModule &CGM) const {}
+
+
+}
 
 //===----------------------------------------------------------------------===//
 // SPIR ABI Implementation
@@ -8214,6 +8290,9 @@ const TargetCodeGenInfo &CodeGenModule::getTargetCodeGenInfo() {
     this->TheTargetCodeGenInfo.reset(P);
     return *P;
   };
+
+  if (getLangOpts().PACXX)
+    return SetCGInfo(new PACXXTargetCodeGenInfo(Types));
 
   const llvm::Triple &Triple = getTarget().getTriple();
   switch (Triple.getArch()) {

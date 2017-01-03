@@ -4032,8 +4032,8 @@ def err_specialize_member_of_template : Error<
 def err_default_arg_in_partial_spec : Error<
     "default template argument in a class template partial specialization">;
 def err_dependent_non_type_arg_in_partial_spec : Error<
-    "non-type template argument depends on a template parameter of the "
-    "partial specialization">;
+    "type of specialized non-type template argument depends on a template "
+    "parameter of the partial specialization">;
 def note_dependent_non_type_default_arg_in_partial_spec : Note<
     "template parameter is used in default argument declared here">;
 def err_dependent_typed_non_type_arg_in_partial_spec : Error<
@@ -4043,10 +4043,16 @@ def err_partial_spec_args_match_primary_template : Error<
     "%select{class|variable}0 template partial specialization does not "
     "specialize any template argument; to %select{declare|define}1 the "
     "primary template, remove the template argument list">; 
-def warn_partial_specs_not_deducible : Warning<
+def ext_partial_spec_not_more_specialized_than_primary : ExtWarn<
+    "%select{class|variable}0 template partial specialization is not "
+    "more specialized than the primary template">, DefaultError,
+    InGroup<DiagGroup<"invalid-partial-specialization">>;
+def note_partial_spec_not_more_specialized_than_primary : Note<"%0">;
+def ext_partial_specs_not_deducible : ExtWarn<
     "%select{class|variable}0 template partial specialization contains "
     "%select{a template parameter|template parameters}1 that cannot be "
-    "deduced; this partial specialization will never be used">;
+    "deduced; this partial specialization will never be used">,
+    DefaultError, InGroup<DiagGroup<"unusable-partial-specialization">>;
 def note_partial_spec_unused_parameter : Note<
     "non-deducible template parameter %0">;
 def err_partial_spec_ordering_ambiguous : Error<
@@ -4147,7 +4153,7 @@ def note_function_template_deduction_instantiation_here : Note<
   "%1">;
 def note_deduced_template_arg_substitution_here : Note<
   "during template argument deduction for %select{class|variable}0 template "
-  "partial specialization %1 %2">;
+  "%select{partial specialization |}1%2 %3">;
 def note_prior_template_arg_substitution : Note<
   "while substituting prior template arguments into %select{non-type|template}0"
   " template parameter%1 %2">;
@@ -7068,6 +7074,10 @@ let CategoryName = "Inline Assembly Issue" in {
   def note_asm_input_duplicate_first : Note<
     "constraint '%0' is already present here">;
 }
+
+  def error_inoutput_conflict_with_clobber : Error<
+    "asm-specifier for input or output variable conflicts with asm"
+    " clobber list">;
 
 let CategoryName = "Semantic Issue" in {
 

@@ -137,7 +137,7 @@ namespace DeduceDifferentType {
   struct Z { constexpr operator Y&() { return y; } } z;
   constexpr Y::operator Z&() { return z; }
   template<Y &> struct D {};
-  template<Z &z> int d(D<z>); // expected-note {{does not have the same type}}
+  template<Z &z> int d(D<z>); // expected-note {{couldn't infer template argument 'z'}}
   int d_imp = d(D<y>()); // expected-error {{no matching function}}
   int d_exp = d<y>(D<y>());
 }
@@ -278,6 +278,12 @@ namespace Auto {
 
     using R1 = fn_result_type<foo>::type;
     using R1 = double;
+
+    template<int, auto &f> struct fn_result_type_partial_order;
+    template<auto &f> struct fn_result_type_partial_order<0, f>;
+    template<class R, class... Args, R (& f)(Args...)>
+    struct fn_result_type_partial_order<0, f> {};
+    fn_result_type_partial_order<0, foo> frtpo;
   }
 
   namespace Variadic {
@@ -300,4 +306,25 @@ namespace Auto {
 
     static_assert(nth_element_v<2, value_list<'a', 27U, false>> == false, "value mismatch");
   }
+}
+
+namespace Nested {
+  template<typename T> struct A {
+    template<auto X> struct B;
+    template<auto *P> struct B<P>;
+    template<auto **P> struct B<P> { using pointee = decltype(+**P); };
+    template<auto (*P)(T)> struct B<P> { using param = T; };
+    template<typename U, auto (*P)(T, U)> struct B<P> { using param2 = U; };
+  };
+
+  using Int = int;
+
+  int *n;
+  using Int = A<int>::B<&n>::pointee;
+
+  void f(int);
+  using Int = A<int>::B<&f>::param;
+
+  void g(int, int);
+  using Int = A<int>::B<&g>::param2;
 }

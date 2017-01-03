@@ -2362,7 +2362,15 @@ enum CXCursorKind {
    */
   CXCursor_OMPTargetTeamsDistributeDirective = 276,
 
-  CXCursor_LastStmt = CXCursor_OMPTargetTeamsDistributeDirective,
+  /** \brief OpenMP target teams distribute parallel for directive.
+   */
+  CXCursor_OMPTargetTeamsDistributeParallelForDirective = 277,
+
+  /** \brief OpenMP target teams distribute parallel for simd directive.
+   */
+  CXCursor_OMPTargetTeamsDistributeParallelForSimdDirective = 278,
+
+  CXCursor_LastStmt = CXCursor_OMPTargetTeamsDistributeParallelForSimdDirective,
 
   /**
    * \brief Cursor that represents the translation unit itself.

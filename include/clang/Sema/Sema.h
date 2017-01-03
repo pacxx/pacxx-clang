@@ -5790,7 +5790,10 @@ public:
                            SourceLocation EqualLoc,
                            ParsedType DefaultArg);
 
+  QualType CheckNonTypeTemplateParameterType(TypeSourceInfo *&TSI,
+                                             SourceLocation Loc);
   QualType CheckNonTypeTemplateParameterType(QualType T, SourceLocation Loc);
+
   Decl *ActOnNonTypeTemplateParameter(Scope *S, Declarator &D,
                                       unsigned Depth,
                                       unsigned Position,
@@ -5926,6 +5929,15 @@ public:
                                    AttributeList *Attr,
                                  MultiTemplateParamsArg TemplateParameterLists,
                                    SkipBodyInfo *SkipBody = nullptr);
+
+  bool CheckTemplatePartialSpecializationArgs(SourceLocation Loc,
+                                              TemplateDecl *PrimaryTemplate,
+                                              unsigned NumExplicitArgs,
+                                              ArrayRef<TemplateArgument> Args);
+  void CheckTemplatePartialSpecialization(
+      ClassTemplatePartialSpecializationDecl *Partial);
+  void CheckTemplatePartialSpecialization(
+      VarTemplatePartialSpecializationDecl *Partial);
 
   Decl *ActOnTemplateDeclarator(Scope *S,
                                 MultiTemplateParamsArg TemplateParameterLists,
@@ -6697,9 +6709,18 @@ public:
                                   ClassTemplatePartialSpecializationDecl *PS2,
                                   SourceLocation Loc);
 
+  bool isMoreSpecializedThanPrimary(ClassTemplatePartialSpecializationDecl *T,
+                                    sema::TemplateDeductionInfo &Info);
+
   VarTemplatePartialSpecializationDecl *getMoreSpecializedPartialSpecialization(
       VarTemplatePartialSpecializationDecl *PS1,
       VarTemplatePartialSpecializationDecl *PS2, SourceLocation Loc);
+
+  bool isMoreSpecializedThanPrimary(VarTemplatePartialSpecializationDecl *T,
+                                    sema::TemplateDeductionInfo &Info);
+
+  bool isTemplateTemplateParameterAtLeastAsSpecializedAs(
+      TemplateParameterList *P, TemplateDecl *AArg, SourceLocation Loc);
 
   void MarkUsedTemplateParameters(const TemplateArgumentList &TemplateArgs,
                                   bool OnlyDeduced,
@@ -6752,7 +6773,7 @@ public:
       /// template argument deduction for either a class template
       /// partial specialization or a function template. The
       /// Entity is either a {Class|Var}TemplatePartialSpecializationDecl or
-      /// a FunctionTemplateDecl.
+      /// a TemplateDecl.
       DeducedTemplateArgumentSubstitution,
 
       /// We are substituting prior template arguments into a new
@@ -6970,6 +6991,14 @@ public:
                           FunctionTemplateDecl *FunctionTemplate,
                           ArrayRef<TemplateArgument> TemplateArgs,
                           ActiveTemplateInstantiation::InstantiationKind Kind,
+                          sema::TemplateDeductionInfo &DeductionInfo,
+                          SourceRange InstantiationRange = SourceRange());
+
+    /// \brief Note that we are instantiating as part of template
+    /// argument deduction for a class template declaration.
+    InstantiatingTemplate(Sema &SemaRef, SourceLocation PointOfInstantiation,
+                          TemplateDecl *Template,
+                          ArrayRef<TemplateArgument> TemplateArgs,
                           sema::TemplateDeductionInfo &DeductionInfo,
                           SourceRange InstantiationRange = SourceRange());
 
@@ -8476,6 +8505,18 @@ public:
   /// Called on well-formed '\#pragma omp target teams distribute' after parsing
   /// of the associated statement.
   StmtResult ActOnOpenMPTargetTeamsDistributeDirective(
+      ArrayRef<OMPClause *> Clauses, Stmt *AStmt, SourceLocation StartLoc,
+      SourceLocation EndLoc,
+      llvm::DenseMap<ValueDecl *, Expr *> &VarsWithImplicitDSA);
+  /// Called on well-formed '\#pragma omp target teams distribute parallel for'
+  /// after parsing of the associated statement.
+  StmtResult ActOnOpenMPTargetTeamsDistributeParallelForDirective(
+      ArrayRef<OMPClause *> Clauses, Stmt *AStmt, SourceLocation StartLoc,
+      SourceLocation EndLoc,
+      llvm::DenseMap<ValueDecl *, Expr *> &VarsWithImplicitDSA);
+  /// Called on well-formed '\#pragma omp target teams distribute parallel for
+  /// simd' after parsing of the associated statement.
+  StmtResult ActOnOpenMPTargetTeamsDistributeParallelForSimdDirective(
       ArrayRef<OMPClause *> Clauses, Stmt *AStmt, SourceLocation StartLoc,
       SourceLocation EndLoc,
       llvm::DenseMap<ValueDecl *, Expr *> &VarsWithImplicitDSA);

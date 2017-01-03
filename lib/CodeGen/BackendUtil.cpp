@@ -504,21 +504,14 @@ void EmitAssemblyHelper::CreateTargetMachine(bool MustCreateTM) {
 
   // Keep this synced with the equivalent code in tools/driver/cc1as_main.cpp.
   llvm::Optional<llvm::Reloc::Model> RM;
-  if (CodeGenOpts.RelocationModel == "static") {
-    RM = llvm::Reloc::Static;
-  } else if (CodeGenOpts.RelocationModel == "pic") {
-    RM = llvm::Reloc::PIC_;
-  } else if (CodeGenOpts.RelocationModel == "ropi") {
-    RM = llvm::Reloc::ROPI;
-  } else if (CodeGenOpts.RelocationModel == "rwpi") {
-    RM = llvm::Reloc::RWPI;
-  } else if (CodeGenOpts.RelocationModel == "ropi-rwpi") {
-    RM = llvm::Reloc::ROPI_RWPI;
-  } else {
-    assert(CodeGenOpts.RelocationModel == "dynamic-no-pic" &&
-           "Invalid PIC model!");
-    RM = llvm::Reloc::DynamicNoPIC;
-  }
+  RM = llvm::StringSwitch<llvm::Reloc::Model>(CodeGenOpts.RelocationModel)
+           .Case("static", llvm::Reloc::Static)
+           .Case("pic", llvm::Reloc::PIC_)
+           .Case("ropi", llvm::Reloc::ROPI)
+           .Case("rwpi", llvm::Reloc::RWPI)
+           .Case("ropi-rwpi", llvm::Reloc::ROPI_RWPI)
+           .Case("dynamic-no-pic", llvm::Reloc::DynamicNoPIC);
+  assert(RM.hasValue() && "invalid PIC model!");
 
   CodeGenOpt::Level OptLevel = CodeGenOpt::Default;
   switch (CodeGenOpts.OptimizationLevel) {
@@ -780,17 +773,20 @@ void EmitAssemblyHelper::EmitAssemblyWithNewPassManager(
   PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
 
   ModulePassManager MPM;
-  if (CodeGenOpts.OptimizationLevel == 0) {
-    // Build a minimal pipeline based on the semantics required by Clang, which
-    // is just that always inlining occurs.
-    MPM.addPass(AlwaysInlinerPass());
-  } else {
-    // Otherwise, use the default pass pipeline. We also have to map our
-    // optimization levels into one of the distinct levels used to configure
-    // the pipeline.
-    PassBuilder::OptimizationLevel Level = mapToLevel(CodeGenOpts);
 
-    MPM = PB.buildPerModuleDefaultPipeline(Level);
+  if (!CodeGenOpts.DisableLLVMPasses) {
+    if (CodeGenOpts.OptimizationLevel == 0) {
+      // Build a minimal pipeline based on the semantics required by Clang,
+      // which is just that always inlining occurs.
+      MPM.addPass(AlwaysInlinerPass());
+    } else {
+      // Otherwise, use the default pass pipeline. We also have to map our
+      // optimization levels into one of the distinct levels used to configure
+      // the pipeline.
+      PassBuilder::OptimizationLevel Level = mapToLevel(CodeGenOpts);
+
+      MPM = PB.buildPerModuleDefaultPipeline(Level);
+    }
   }
 
   // FIXME: We still use the legacy pass manager to do code generation. We
@@ -860,11 +856,23 @@ static void runThinLTOBackend(const CodeGenOptions &CGOpts, Module *M,
       ModuleToDefinedGVSummaries;
   CombinedIndex->collectDefinedGVSummariesPerModule(ModuleToDefinedGVSummaries);
 
-  // FIXME: We could simply import the modules mentioned in the combined index
-  // here.
+  // We can simply import the values mentioned in the combined index, since
+  // we should only invoke this using the individual indexes written out
+  // via a WriteIndexesThinBackend.
   FunctionImporter::ImportMapTy ImportList;
-  ComputeCrossModuleImportForModule(M->getModuleIdentifier(), *CombinedIndex,
-                                    ImportList);
+  for (auto &GlobalList : *CombinedIndex) {
+    auto GUID = GlobalList.first;
+    assert(GlobalList.second.size() == 1 &&
+           "Expected individual combined index to have one summary per GUID");
+    auto &Summary = GlobalList.second[0];
+    // Skip the summaries for the importing module. These are included to
+    // e.g. record required linkage changes.
+    if (Summary->modulePath() == M->getModuleIdentifier())
+      continue;
+    // Doesn't matter what value we plug in to the map, just needs an entry
+    // to provoke importing by thinBackend.
+    ImportList[Summary->modulePath()][GUID] = 1;
+  }
 
   std::vector<std::unique_ptr<llvm::MemoryBuffer>> OwnedImports;
   MapVector<llvm::StringRef, llvm::BitcodeModule> ModuleMap;

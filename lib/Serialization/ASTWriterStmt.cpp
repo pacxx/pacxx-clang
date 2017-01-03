@@ -2550,6 +2550,19 @@ void ASTStmtWriter::VisitOMPTargetTeamsDistributeDirective(
   Code = serialization::STMT_OMP_TARGET_TEAMS_DISTRIBUTE_DIRECTIVE;
 }
 
+void ASTStmtWriter::VisitOMPTargetTeamsDistributeParallelForDirective(
+    OMPTargetTeamsDistributeParallelForDirective *D) {
+  VisitOMPLoopDirective(D);
+  Code = serialization::STMT_OMP_TARGET_TEAMS_DISTRIBUTE_PARALLEL_FOR_DIRECTIVE;
+}
+
+void ASTStmtWriter::VisitOMPTargetTeamsDistributeParallelForSimdDirective(
+    OMPTargetTeamsDistributeParallelForSimdDirective *D) {
+  VisitOMPLoopDirective(D);
+  Code = serialization::
+      STMT_OMP_TARGET_TEAMS_DISTRIBUTE_PARALLEL_FOR_SIMD_DIRECTIVE;
+}
+
 //===----------------------------------------------------------------------===//
 // ASTWriter Implementation
 //===----------------------------------------------------------------------===//

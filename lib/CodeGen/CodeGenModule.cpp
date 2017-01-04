@@ -3035,12 +3035,6 @@ void CodeGenModule::EmitGlobalFunctionDefinition(GlobalDecl GD,
 
   const auto *D = cast<FunctionDecl>(GD.getDecl());
   
-  // PACXX MOD: check kernel 
-  if (getLangOpts().PACXX) {
-    pacxx::KernelVisitor V; 
-    V.StartFromFunctionDecl(D); 
-  }
-
   // Compute the function info and LLVM type.
   const CGFunctionInfo &FI = getTypes().arrangeGlobalDeclaration(GD);
   llvm::FunctionType *Ty = getTypes().GetFunctionType(FI);

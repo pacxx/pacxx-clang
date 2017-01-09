@@ -1725,7 +1725,7 @@ namespace AfterError {
   constexpr int error() { // expected-error {{no return statement}}
     return foobar; // expected-error {{undeclared identifier}}
   }
-  constexpr int k = error(); // expected-error {{must be initialized by a constant expression}}
+  constexpr int k = error();
 }
 
 namespace std {
@@ -1902,9 +1902,9 @@ namespace ZeroSizeTypes {
 namespace BadDefaultInit {
   template<int N> struct X { static const int n = N; };
 
-  struct A { // expected-error {{default member initializer for 'k' needed within definition of enclosing class}}
+  struct A {
     int k = // expected-note {{default member initializer declared here}}
-        X<A().k>::n; // expected-error {{not a constant expression}} expected-note {{implicit default constructor for 'BadDefaultInit::A' first required here}}
+        X<A().k>::n; // expected-error {{default member initializer for 'k' needed within definition of enclosing class}}
   };
 
   // FIXME: The "constexpr constructor must initialize all members" diagnostic
@@ -2030,7 +2030,7 @@ namespace PR21786 {
 
 namespace PR21859 {
   constexpr int Fun() { return; } // expected-error {{non-void constexpr function 'Fun' should return a value}}
-  constexpr int Var = Fun(); // expected-error {{constexpr variable 'Var' must be initialized by a constant expression}}
+  constexpr int Var = Fun();
 }
 
 struct InvalidRedef {

@@ -2141,8 +2141,11 @@ def err_constexpr_local_var_no_init : Error<
 def ext_constexpr_function_never_constant_expr : ExtWarn<
   "constexpr %select{function|constructor}0 never produces a "
   "constant expression">, InGroup<DiagGroup<"invalid-constexpr">>, DefaultError;
-def err_enable_if_never_constant_expr : Error<
-  "'enable_if' attribute expression never produces a constant expression">;
+def err_attr_cond_never_constant_expr : Error<
+  "%0 attribute expression never produces a constant expression">;
+def err_diagnose_if_invalid_diagnostic_type : Error<
+  "invalid diagnostic type for 'diagnose_if'; use \"error\" or \"warning\" "
+  "instead">;
 def err_constexpr_body_no_return : Error<
   "no return statement in constexpr function">;
 def err_constexpr_return_missing_expr : Error<
@@ -3333,6 +3336,9 @@ def note_ovl_candidate : Note<"candidate "
 
 def note_ovl_candidate_inherited_constructor : Note<
     "constructor from base class %0 inherited here">;
+def note_ovl_candidate_inherited_constructor_slice : Note<
+    "constructor inherited from base class cannot be used to initialize from "
+    "an argument of the derived class type">;
 def note_ovl_candidate_illegal_constructor : Note<
     "candidate %select{constructor|template}0 ignored: "
     "instantiation %select{takes|would take}0 its own class type by value">;
@@ -3366,7 +3372,9 @@ def note_ovl_candidate_disabled_by_enable_if : Note<
 def note_ovl_candidate_has_pass_object_size_params: Note<
     "candidate address cannot be taken because parameter %0 has "
     "pass_object_size attribute">;
-def note_ovl_candidate_disabled_by_enable_if_attr : Note<
+def err_diagnose_if_succeeded : Error<"%0">;
+def warn_diagnose_if_succeeded : Warning<"%0">, InGroup<UserDefinedWarnings>;
+def note_ovl_candidate_disabled_by_function_cond_attr : Note<
     "candidate disabled: %0">;
 def note_ovl_candidate_disabled_by_extension : Note<
     "candidate disabled due to OpenCL extension">;
@@ -3375,13 +3383,12 @@ def err_addrof_function_disabled_by_enable_if_attr : Error<
     "non-tautological enable_if conditions">;
 def note_addrof_ovl_candidate_disabled_by_enable_if_attr : Note<
     "candidate function made ineligible by enable_if">;
-def note_ovl_candidate_failed_overload_resolution : Note<
-    "candidate template ignored: couldn't resolve reference to overloaded "
-    "function %0">;
 def note_ovl_candidate_deduced_mismatch : Note<
     "candidate template ignored: deduced type "
-    "%diff{$ of %ordinal0 parameter does not match adjusted type $ of argument"
-    "|of %ordinal0 parameter does not match adjusted type of argument}1,2%3">;
+    "%diff{$ of %select{|element of }4%ordinal0 parameter does not match "
+    "adjusted type $ of %select{|element of }4argument"
+    "|of %select{|element of }4%ordinal0 parameter does not match "
+    "adjusted type of %select{|element of }4argument}1,2%3">;
 def note_ovl_candidate_non_deduced_mismatch : Note<
     "candidate template ignored: could not match %diff{$ against $|types}0,1">;
 // This note is needed because the above note would sometimes print two
@@ -4396,6 +4403,7 @@ def note_not_found_by_two_phase_lookup : Note<"%0 should be declared prior to th
 def err_undeclared_use : Error<"use of undeclared %0">;
 def warn_deprecated : Warning<"%0 is deprecated">,
     InGroup<DeprecatedDeclarations>;
+def note_from_diagnose_if : Note<"from 'diagnose_if' attribute on %0:">;
 def warn_property_method_deprecated :
     Warning<"property access is using %0 method which is deprecated">,
     InGroup<DeprecatedDeclarations>;

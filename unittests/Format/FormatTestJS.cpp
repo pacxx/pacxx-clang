@@ -541,8 +541,8 @@ TEST_F(FormatTestJS, FunctionLiterals) {
                "      foo();\n"
                "      bar();\n"
                "    },\n"
-               "    this, arg1IsReallyLongAndNeeedsLineBreaks,\n"
-               "    arg3IsReallyLongAndNeeedsLineBreaks);");
+               "    this, arg1IsReallyLongAndNeedsLineBreaks,\n"
+               "    arg3IsReallyLongAndNeedsLineBreaks);");
   verifyFormat("var closure = goog.bind(function() {  // comment\n"
                "  foo();\n"
                "  bar();\n"
@@ -858,6 +858,24 @@ TEST_F(FormatTestJS, AutomaticSemicolonInsertionHeuristic) {
                "return 1",
                "a = null\n"
                "  return   1");
+  verifyFormat(
+      "x = {a: 1}\n"
+      "class Y {}",
+      "  x  =  {a  : 1}\n"
+      "   class  Y {  }");
+}
+
+TEST_F(FormatTestJS, ImportExportASI) {
+  verifyFormat(
+      "import {x} from 'y'\n"
+      "export function z() {}",
+      "import   {x} from 'y'\n"
+      "  export function z() {}");
+  verifyFormat(
+      "export {x}\n"
+      "class Y {}",
+      "  export {x}\n"
+      "  class  Y {\n}");
 }
 
 TEST_F(FormatTestJS, ClosureStyleCasts) {

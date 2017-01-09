@@ -14,6 +14,7 @@
 #include "clang/Frontend/CodeGenOptions.h"
 #include "clang/Frontend/FrontendDiagnostic.h"
 #include "clang/Frontend/Utils.h"
+#include "clang/Lex/HeaderSearchOptions.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSwitch.h"
@@ -32,6 +33,7 @@
 #include "llvm/IR/ModuleSummaryIndex.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/LTO/LTOBackend.h"
+#include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/SubtargetFeature.h"
 #include "llvm/Object/ModuleSummaryIndexObjectFile.h"
 #include "llvm/Passes/PassBuilder.h"
@@ -61,6 +63,7 @@ namespace {
 
 class EmitAssemblyHelper {
   DiagnosticsEngine &Diags;
+  const HeaderSearchOptions &HSOpts;
   const CodeGenOptions &CodeGenOpts;
   const clang::TargetOptions &TargetOpts;
   const LangOptions &LangOpts;
@@ -100,11 +103,14 @@ private:
                      raw_pwrite_stream &OS);
 
 public:
-  EmitAssemblyHelper(DiagnosticsEngine &_Diags, const CodeGenOptions &CGOpts,
+  EmitAssemblyHelper(DiagnosticsEngine &_Diags,
+                     const HeaderSearchOptions &HeaderSearchOpts,
+                     const CodeGenOptions &CGOpts,
                      const clang::TargetOptions &TOpts,
                      const LangOptions &LOpts, Module *M)
-      : Diags(_Diags), CodeGenOpts(CGOpts), TargetOpts(TOpts), LangOpts(LOpts),
-        TheModule(M), CodeGenerationTime("codegen", "Code Generation Time") {}
+      : Diags(_Diags), HSOpts(HeaderSearchOpts), CodeGenOpts(CGOpts),
+        TargetOpts(TOpts), LangOpts(LOpts), TheModule(M),
+        CodeGenerationTime("codegen", "Code Generation Time") {}
 
   ~EmitAssemblyHelper() {
     if (CodeGenOpts.DisableFree)
@@ -306,7 +312,8 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
   // At O0 and O1 we only run the always inliner which is more efficient. At
   // higher optimization levels we run the normal inliner.
   if (CodeGenOpts.OptimizationLevel <= 1) {
-    bool InsertLifetimeIntrinsics = CodeGenOpts.OptimizationLevel != 0;
+    bool InsertLifetimeIntrinsics = (CodeGenOpts.OptimizationLevel != 0 &&
+                                     !CodeGenOpts.DisableLifetimeMarkers);
     PMBuilder.Inliner = createAlwaysInlinerLegacyPass(InsertLifetimeIntrinsics);
   } else {
     PMBuilder.Inliner = createFunctionInliningPass(
@@ -513,11 +520,22 @@ void EmitAssemblyHelper::CreateTargetMachine(bool MustCreateTM) {
            .Case("dynamic-no-pic", llvm::Reloc::DynamicNoPIC);
   assert(RM.hasValue() && "invalid PIC model!");
 
-  CodeGenOpt::Level OptLevel = CodeGenOpt::Default;
+  CodeGenOpt::Level OptLevel;
   switch (CodeGenOpts.OptimizationLevel) {
-  default: break;
-  case 0: OptLevel = CodeGenOpt::None; break;
-  case 3: OptLevel = CodeGenOpt::Aggressive; break;
+  default:
+    llvm_unreachable("Invalid optimization level!");
+  case 0:
+    OptLevel = CodeGenOpt::None;
+    break;
+  case 1:
+    OptLevel = CodeGenOpt::Less;
+    break;
+  case 2:
+    OptLevel = CodeGenOpt::Default;
+    break; // O2/Os/Oz
+  case 3:
+    OptLevel = CodeGenOpt::Aggressive;
+    break;
   }
 
   llvm::TargetOptions Options;
@@ -584,12 +602,18 @@ void EmitAssemblyHelper::CreateTargetMachine(bool MustCreateTM) {
   Options.MCOptions.MCNoExecStack = CodeGenOpts.NoExecStack;
   Options.MCOptions.MCIncrementalLinkerCompatible =
       CodeGenOpts.IncrementalLinkerCompatible;
-  Options.MCOptions.MCPIECopyRelocations =
-      CodeGenOpts.PIECopyRelocations;
+  Options.MCOptions.MCPIECopyRelocations = CodeGenOpts.PIECopyRelocations;
   Options.MCOptions.MCFatalWarnings = CodeGenOpts.FatalWarnings;
   Options.MCOptions.AsmVerbose = CodeGenOpts.AsmVerbose;
   Options.MCOptions.PreserveAsmComments = CodeGenOpts.PreserveAsmComments;
   Options.MCOptions.ABIName = TargetOpts.ABI;
+  for (const auto &Entry : HSOpts.UserEntries)
+    if (!Entry.IsFramework &&
+        (Entry.Group == frontend::IncludeDirGroup::Quoted ||
+         Entry.Group == frontend::IncludeDirGroup::Angled ||
+         Entry.Group == frontend::IncludeDirGroup::System))
+      Options.MCOptions.IASSearchPaths.push_back(
+          Entry.IgnoreSysRoot ? Entry.Path : HSOpts.Sysroot + Entry.Path);
 
   TM.reset(TheTarget->createTargetMachine(Triple, TargetOpts.CPU, FeaturesStr,
                                           Options, RM, CM, OptLevel));
@@ -837,21 +861,8 @@ void EmitAssemblyHelper::EmitAssemblyWithNewPassManager(
   }
 }
 
-static void runThinLTOBackend(const CodeGenOptions &CGOpts, Module *M,
+static void runThinLTOBackend(ModuleSummaryIndex *CombinedIndex, Module *M,
                               std::unique_ptr<raw_pwrite_stream> OS) {
-  // If we are performing a ThinLTO importing compile, load the function index
-  // into memory and pass it into thinBackend, which will run the function
-  // importer and invoke LTO passes.
-  Expected<std::unique_ptr<ModuleSummaryIndex>> IndexOrErr =
-      llvm::getModuleSummaryIndexForFile(CGOpts.ThinLTOIndexFile);
-  if (!IndexOrErr) {
-    logAllUnhandledErrors(IndexOrErr.takeError(), errs(),
-                          "Error loading index file '" +
-                              CGOpts.ThinLTOIndexFile + "': ");
-    return;
-  }
-  std::unique_ptr<ModuleSummaryIndex> CombinedIndex = std::move(*IndexOrErr);
-
   StringMap<std::map<GlobalValue::GUID, GlobalValueSummary *>>
       ModuleToDefinedGVSummaries;
   CombinedIndex->collectDefinedGVSummariesPerModule(ModuleToDefinedGVSummaries);
@@ -929,17 +940,37 @@ static void runThinLTOBackend(const CodeGenOptions &CGOpts, Module *M,
 }
 
 void clang::EmitBackendOutput(DiagnosticsEngine &Diags,
+                              const HeaderSearchOptions &HeaderOpts,
                               const CodeGenOptions &CGOpts,
                               const clang::TargetOptions &TOpts,
-                              const LangOptions &LOpts, const llvm::DataLayout &TDesc,
-                              Module *M, BackendAction Action,
+                              const LangOptions &LOpts,
+                              const llvm::DataLayout &TDesc, Module *M,
+                              BackendAction Action,
                               std::unique_ptr<raw_pwrite_stream> OS) {
   if (!CGOpts.ThinLTOIndexFile.empty()) {
-    runThinLTOBackend(CGOpts, M, std::move(OS));
-    return;
+    // If we are performing a ThinLTO importing compile, load the function index
+    // into memory and pass it into runThinLTOBackend, which will run the
+    // function importer and invoke LTO passes.
+    Expected<std::unique_ptr<ModuleSummaryIndex>> IndexOrErr =
+        llvm::getModuleSummaryIndexForFile(CGOpts.ThinLTOIndexFile);
+    if (!IndexOrErr) {
+      logAllUnhandledErrors(IndexOrErr.takeError(), errs(),
+                            "Error loading index file '" +
+                            CGOpts.ThinLTOIndexFile + "': ");
+      return;
+    }
+    std::unique_ptr<ModuleSummaryIndex> CombinedIndex = std::move(*IndexOrErr);
+    // A null CombinedIndex means we should skip ThinLTO compilation
+    // (LLVM will optionally ignore empty index files, returning null instead
+    // of an error).
+    bool DoThinLTOBackend = CombinedIndex != nullptr;
+    if (DoThinLTOBackend) {
+      runThinLTOBackend(CombinedIndex.get(), M, std::move(OS));
+      return;
+    }
   }
 
-  EmitAssemblyHelper AsmHelper(Diags, CGOpts, TOpts, LOpts, M);
+  EmitAssemblyHelper AsmHelper(Diags, HeaderOpts, CGOpts, TOpts, LOpts, M);
 
   if (CGOpts.ExperimentalNewPassManager)
     AsmHelper.EmitAssemblyWithNewPassManager(Action, std::move(OS));

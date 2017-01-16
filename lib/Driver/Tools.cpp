@@ -6431,11 +6431,13 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     A->claim();
 
     // We translate this by hand to the -cc1 argument, since nightly test uses
-    // it and developers have been trained to spell it with -mllvm.
-    if (StringRef(A->getValue(0)) == "-disable-llvm-passes") {
-      CmdArgs.push_back("-disable-llvm-passes");
-    } else
+    // it and developers have been trained to spell it with -mllvm. Both
+    // spellings are now deprecated and should be removed.
+    if (StringRef(A->getValue(0)) == "-disable-llvm-optzns") {
+      CmdArgs.push_back("-disable-llvm-optzns");
+    } else {
       A->render(Args, CmdArgs);
+    }
   }
 
   // With -save-temps, we want to save the unoptimized bitcode output from the
@@ -9644,6 +9646,7 @@ void netbsd::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   if (Major >= 7 || Major == 0) {
     switch (getToolChain().getArch()) {
     case llvm::Triple::aarch64:
+    case llvm::Triple::aarch64_be:
     case llvm::Triple::arm:
     case llvm::Triple::armeb:
     case llvm::Triple::thumb:

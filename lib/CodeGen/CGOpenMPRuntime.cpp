@@ -99,10 +99,11 @@ class CGOpenMPOutlinedRegionInfo final : public CGOpenMPRegionInfo {
 public:
   CGOpenMPOutlinedRegionInfo(const CapturedStmt &CS, const VarDecl *ThreadIDVar,
                              const RegionCodeGenTy &CodeGen,
-                             OpenMPDirectiveKind Kind, bool HasCancel)
+                             OpenMPDirectiveKind Kind, bool HasCancel,
+                             StringRef HelperName)
       : CGOpenMPRegionInfo(CS, ParallelOutlinedRegion, CodeGen, Kind,
                            HasCancel),
-        ThreadIDVar(ThreadIDVar) {
+        ThreadIDVar(ThreadIDVar), HelperName(HelperName) {
     assert(ThreadIDVar != nullptr && "No ThreadID in OpenMP region.");
   }
 
@@ -111,7 +112,7 @@ public:
   const VarDecl *getThreadIDVariable() const override { return ThreadIDVar; }
 
   /// \brief Get the name of the capture helper.
-  StringRef getHelperName() const override { return ".omp_outlined."; }
+  StringRef getHelperName() const override { return HelperName; }
 
   static bool classof(const CGCapturedStmtInfo *Info) {
     return CGOpenMPRegionInfo::classof(Info) &&
@@ -123,6 +124,7 @@ private:
   /// \brief A variable or parameter storing global thread id for OpenMP
   /// constructs.
   const VarDecl *ThreadIDVar;
+  StringRef HelperName;
 };
 
 /// \brief API for captured statement code generation in OpenMP constructs.
@@ -855,7 +857,7 @@ llvm::Value *CGOpenMPRuntime::emitParallelOrTeamsOutlinedFunction(
   else if (auto *OPFD = dyn_cast<OMPParallelForDirective>(&D))
     HasCancel = OPFD->hasCancel();
   CGOpenMPOutlinedRegionInfo CGInfo(*CS, ThreadIDVar, CodeGen, InnermostKind,
-                                    HasCancel);
+                                    HasCancel, getOutlinedHelperName());
   CodeGenFunction::CGCapturedStmtRAII CapInfoRAII(CGF, &CGInfo);
   return CGF.GenerateOpenMPCapturedStmtFunction(*CS);
 }
@@ -1892,9 +1894,9 @@ llvm::Function *CGOpenMPRuntime::emitThreadPrivateVarDefinition(
 /// } else {
 ///   ElseGen();
 /// }
-static void emitOMPIfClause(CodeGenFunction &CGF, const Expr *Cond,
-                            const RegionCodeGenTy &ThenGen,
-                            const RegionCodeGenTy &ElseGen) {
+void CGOpenMPRuntime::emitOMPIfClause(CodeGenFunction &CGF, const Expr *Cond,
+                                      const RegionCodeGenTy &ThenGen,
+                                      const RegionCodeGenTy &ElseGen) {
   CodeGenFunction::LexicalScope ConditionScope(CGF, Cond->getSourceRange());
 
   // If the condition constant folds and can be elided, try to avoid emitting
@@ -4004,8 +4006,8 @@ void CGOpenMPRuntime::emitTaskCall(CodeGenFunction &CGF, SourceLocation Loc,
     DepTaskArgs[5] = CGF.Builder.getInt32(0);
     DepTaskArgs[6] = llvm::ConstantPointerNull::get(CGF.VoidPtrTy);
   }
-  auto &&ThenCodeGen = [this, Loc, &Data, TDBase, KmpTaskTQTyRD,
-                        NumDependencies, &TaskArgs,
+  auto &&ThenCodeGen = [this, &Data, TDBase, KmpTaskTQTyRD, NumDependencies,
+                        &TaskArgs,
                         &DepTaskArgs](CodeGenFunction &CGF, PrePostActionTy &) {
     if (!Data.Tied) {
       auto PartIdFI = std::next(KmpTaskTQTyRD->field_begin(), KmpTaskTPartId);
@@ -4560,7 +4562,7 @@ void CGOpenMPRuntime::emitReduction(CodeGenFunction &CGF, SourceLocation Loc,
       }
       if (XExpr) {
         auto *VD = cast<VarDecl>(cast<DeclRefExpr>(*ILHS)->getDecl());
-        auto &&AtomicRedGen = [BO, VD, IPriv,
+        auto &&AtomicRedGen = [BO, VD,
                                Loc](CodeGenFunction &CGF, const Expr *XExpr,
                                     const Expr *EExpr, const Expr *UpExpr) {
           LValue X = CGF.EmitLValue(XExpr);
@@ -4570,7 +4572,7 @@ void CGOpenMPRuntime::emitReduction(CodeGenFunction &CGF, SourceLocation Loc,
           CGF.EmitOMPAtomicSimpleUpdateExpr(
               X, E, BO, /*IsXLHSInRHSPart=*/true,
               llvm::AtomicOrdering::Monotonic, Loc,
-              [&CGF, UpExpr, VD, IPriv, Loc](RValue XRValue) {
+              [&CGF, UpExpr, VD, Loc](RValue XRValue) {
                 CodeGenFunction::OMPPrivateScope PrivateScope(CGF);
                 PrivateScope.addPrivate(
                     VD, [&CGF, VD, XRValue, Loc]() -> Address {
@@ -5986,8 +5988,8 @@ void CGOpenMPRuntime::emitTargetCall(CodeGenFunction &CGF,
                         OffloadError);
 
   // Fill up the pointer arrays and transfer execution to the device.
-  auto &&ThenGen = [&Ctx, &BasePointers, &Pointers, &Sizes, &MapTypes, Device,
-                    OutlinedFnID, OffloadError, OffloadErrorQType,
+  auto &&ThenGen = [&BasePointers, &Pointers, &Sizes, &MapTypes, Device,
+                    OutlinedFnID, OffloadError,
                     &D](CodeGenFunction &CGF, PrePostActionTy &) {
     auto &RT = CGF.CGM.getOpenMPRuntime();
     // Emit the offloading arrays.
@@ -6273,8 +6275,8 @@ void CGOpenMPRuntime::emitTargetDataCalls(
   // Generate the code for the opening of the data environment. Capture all the
   // arguments of the runtime call by reference because they are used in the
   // closing of the region.
-  auto &&BeginThenGen = [&D, &CGF, Device, &Info, &CodeGen, &NoPrivAction](
-      CodeGenFunction &CGF, PrePostActionTy &) {
+  auto &&BeginThenGen = [&D, Device, &Info, &CodeGen](CodeGenFunction &CGF,
+                                                      PrePostActionTy &) {
     // Fill up the arrays with all the mapped variables.
     MappableExprsHandler::MapBaseValuesArrayTy BasePointers;
     MappableExprsHandler::MapValuesArrayTy Pointers;
@@ -6320,8 +6322,7 @@ void CGOpenMPRuntime::emitTargetDataCalls(
   };
 
   // Generate code for the closing of the data region.
-  auto &&EndThenGen = [&CGF, Device, &Info](CodeGenFunction &CGF,
-                                            PrePostActionTy &) {
+  auto &&EndThenGen = [Device, &Info](CodeGenFunction &CGF, PrePostActionTy &) {
     assert(Info.isValid() && "Invalid data environment closing arguments.");
 
     llvm::Value *BasePointersArrayArg = nullptr;
@@ -6399,7 +6400,7 @@ void CGOpenMPRuntime::emitTargetDataStandAloneCall(
          "Expecting either target enter, exit data, or update directives.");
 
   // Generate the code for the opening of the data environment.
-  auto &&ThenGen = [&D, &CGF, Device](CodeGenFunction &CGF, PrePostActionTy &) {
+  auto &&ThenGen = [&D, Device](CodeGenFunction &CGF, PrePostActionTy &) {
     // Fill up the arrays with all the mapped variables.
     MappableExprsHandler::MapBaseValuesArrayTy BasePointers;
     MappableExprsHandler::MapValuesArrayTy Pointers;

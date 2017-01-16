@@ -4272,7 +4272,7 @@ Sema::CompareReferenceRelationship(SourceLocation Loc,
     return Ref_Related;
 }
 
-/// \brief Look for a user-defined conversion to an value reference-compatible
+/// \brief Look for a user-defined conversion to a value reference-compatible
 ///        with DeclType. Return true if something definite is found.
 static bool
 FindConversionForRefInit(Sema &S, ImplicitConversionSequence &ICS,
@@ -5944,6 +5944,28 @@ Sema::AddOverloadCandidate(FunctionDecl *Function,
       Candidate.FailureKind = ovl_fail_illegal_constructor;
       return;
     }
+
+    // C++ [over.match.funcs]p8: (proposed DR resolution)
+    //   A constructor inherited from class type C that has a first parameter
+    //   of type "reference to P" (including such a constructor instantiated
+    //   from a template) is excluded from the set of candidate functions when
+    //   constructing an object of type cv D if the argument list has exactly
+    //   one argument and D is reference-related to P and P is reference-related
+    //   to C.
+    auto *Shadow = dyn_cast<ConstructorUsingShadowDecl>(FoundDecl.getDecl());
+    if (Shadow && Args.size() == 1 && Constructor->getNumParams() >= 1 &&
+        Constructor->getParamDecl(0)->getType()->isReferenceType()) {
+      QualType P = Constructor->getParamDecl(0)->getType()->getPointeeType();
+      QualType C = Context.getRecordType(Constructor->getParent());
+      QualType D = Context.getRecordType(Shadow->getParent());
+      SourceLocation Loc = Args.front()->getExprLoc();
+      if ((Context.hasSameUnqualifiedType(P, C) || IsDerivedFrom(Loc, P, C)) &&
+          (Context.hasSameUnqualifiedType(D, P) || IsDerivedFrom(Loc, D, P))) {
+        Candidate.Viable = false;
+        Candidate.FailureKind = ovl_fail_inhctor_slice;
+        return;
+      }
+    }
   }
 
   unsigned NumParams = Proto->getNumParams();
@@ -6013,31 +6035,6 @@ Sema::AddOverloadCandidate(FunctionDecl *Function,
       // argument for which there is no corresponding parameter is
       // considered to ""match the ellipsis" (C+ 13.3.3.1.3).
       Candidate.Conversions[ArgIdx].setEllipsis();
-    }
-  }
-
-  // C++ [over.best.ics]p4+: (proposed DR resolution)
-  //   If the target is the first parameter of an inherited constructor when
-  //   constructing an object of type C with an argument list that has exactly
-  //   one expression, an implicit conversion sequence cannot be formed if C is
-  //   reference-related to the type that the argument would have after the
-  //   application of the user-defined conversion (if any) and before the final
-  //   standard conversion sequence. 
-  auto *Shadow = dyn_cast<ConstructorUsingShadowDecl>(FoundDecl.getDecl());
-  if (Shadow && Args.size() == 1 && !isa<InitListExpr>(Args.front())) {
-    bool DerivedToBase, ObjCConversion, ObjCLifetimeConversion;
-    QualType ConvertedArgumentType = Args.front()->getType();
-    if (Candidate.Conversions[0].isUserDefined())
-      ConvertedArgumentType =
-          Candidate.Conversions[0].UserDefined.After.getFromType();
-    if (CompareReferenceRelationship(Args.front()->getLocStart(),
-                                     Context.getRecordType(Shadow->getParent()),
-                                     ConvertedArgumentType, DerivedToBase,
-                                     ObjCConversion,
-                                     ObjCLifetimeConversion) >= Ref_Related) {
-      Candidate.Viable = false;
-      Candidate.FailureKind = ovl_fail_inhctor_slice;
-      return;
     }
   }
 
@@ -6596,7 +6593,9 @@ Sema::AddMethodTemplateCandidate(FunctionTemplateDecl *MethodTmpl,
     Candidate.Function = MethodTmpl->getTemplatedDecl();
     Candidate.Viable = false;
     Candidate.IsSurrogate = false;
-    Candidate.IgnoreObjectArgument = false;
+    Candidate.IgnoreObjectArgument =
+        cast<CXXMethodDecl>(Candidate.Function)->isStatic() ||
+        ObjectType.isNull();
     Candidate.ExplicitCallArguments = Args.size();
     if (Result == TDK_NonDependentConversionFailure)
       Candidate.FailureKind = ovl_fail_bad_conversion;
@@ -6658,7 +6657,11 @@ Sema::AddTemplateOverloadCandidate(FunctionTemplateDecl *FunctionTemplate,
     Candidate.Function = FunctionTemplate->getTemplatedDecl();
     Candidate.Viable = false;
     Candidate.IsSurrogate = false;
-    Candidate.IgnoreObjectArgument = false;
+    // Ignore the object argument if there is one, since we don't have an object
+    // type.
+    Candidate.IgnoreObjectArgument =
+        isa<CXXMethodDecl>(Candidate.Function) &&
+        !isa<CXXConstructorDecl>(Candidate.Function);
     Candidate.ExplicitCallArguments = Args.size();
     if (Result == TDK_NonDependentConversionFailure)
       Candidate.FailureKind = ovl_fail_bad_conversion;
@@ -10216,8 +10219,13 @@ static void NoteFunctionCandidate(Sema &S, OverloadCandidate *Cand,
     return DiagnoseOpenCLExtensionDisabled(S, Cand);
 
   case ovl_fail_inhctor_slice:
+    // It's generally not interesting to note copy/move constructors here.
+    if (cast<CXXConstructorDecl>(Fn)->isCopyOrMoveConstructor())
+      return;
     S.Diag(Fn->getLocation(),
-           diag::note_ovl_candidate_inherited_constructor_slice);
+           diag::note_ovl_candidate_inherited_constructor_slice)
+      << (Fn->getPrimaryTemplate() ? 1 : 0)
+      << Fn->getParamDecl(0)->getType()->isRValueReferenceType();
     MaybeEmitInheritedConstructorNote(S, Cand->FoundDecl);
     return;
 
@@ -10490,56 +10498,42 @@ static void CompleteNonViableCandidate(Sema &S, OverloadCandidate *Cand,
   // operation somehow.
   bool SuppressUserConversions = false;
 
-  const FunctionProtoType *Proto;
-  unsigned ArgIdx = 0;
+  unsigned ConvIdx = 0;
+  ArrayRef<QualType> ParamTypes;
 
   if (Cand->IsSurrogate) {
     QualType ConvType
       = Cand->Surrogate->getConversionType().getNonReferenceType();
     if (const PointerType *ConvPtrType = ConvType->getAs<PointerType>())
       ConvType = ConvPtrType->getPointeeType();
-    Proto = ConvType->getAs<FunctionProtoType>();
-    ArgIdx = 1;
+    ParamTypes = ConvType->getAs<FunctionProtoType>()->getParamTypes();
+    // Conversion 0 is 'this', which doesn't have a corresponding argument.
+    ConvIdx = 1;
   } else if (Cand->Function) {
-    Proto = Cand->Function->getType()->getAs<FunctionProtoType>();
+    ParamTypes =
+        Cand->Function->getType()->getAs<FunctionProtoType>()->getParamTypes();
     if (isa<CXXMethodDecl>(Cand->Function) &&
-        !isa<CXXConstructorDecl>(Cand->Function))
-      ArgIdx = 1;
-  } else {
-    // Builtin binary operator with a bad first conversion.
-    assert(ConvCount <= 3);
-    for (unsigned ConvIdx = (Cand->IgnoreObjectArgument ? 1 : 0);
-         ConvIdx != ConvCount; ++ConvIdx) {
-      if (Cand->Conversions[ConvIdx].isInitialized())
-        continue;
-      if (Cand->BuiltinTypes.ParamTypes[ConvIdx]->isDependentType())
-        Cand->Conversions[ConvIdx].setAsIdentityConversion(
-            Args[ConvIdx]->getType());
-      else
-        Cand->Conversions[ConvIdx] = TryCopyInitialization(
-            S, Args[ConvIdx], Cand->BuiltinTypes.ParamTypes[ConvIdx],
-            SuppressUserConversions,
-            /*InOverloadResolution*/ true,
-            /*AllowObjCWritebackConversion=*/
-            S.getLangOpts().ObjCAutoRefCount);
-      // FIXME: If the conversion is bad, try to fix it.
+        !isa<CXXConstructorDecl>(Cand->Function)) {
+      // Conversion 0 is 'this', which doesn't have a corresponding argument.
+      ConvIdx = 1;
     }
-    return;
+  } else {
+    // Builtin operator.
+    assert(ConvCount <= 3);
+    ParamTypes = Cand->BuiltinTypes.ParamTypes;
   }
 
   // Fill in the rest of the conversions.
-  unsigned NumParams = Proto->getNumParams();
-  for (unsigned ConvIdx = (Cand->IgnoreObjectArgument ? 1 : 0);
-       ConvIdx != ConvCount; ++ConvIdx, ++ArgIdx) {
+  for (unsigned ArgIdx = 0; ConvIdx != ConvCount; ++ConvIdx, ++ArgIdx) {
     if (Cand->Conversions[ConvIdx].isInitialized()) {
-      // Found the bad conversion.
-    } else if (ArgIdx < NumParams) {
-      if (Proto->getParamType(ArgIdx)->isDependentType())
+      // We've already checked this conversion.
+    } else if (ArgIdx < ParamTypes.size()) {
+      if (ParamTypes[ArgIdx]->isDependentType())
         Cand->Conversions[ConvIdx].setAsIdentityConversion(
             Args[ArgIdx]->getType());
       else {
         Cand->Conversions[ConvIdx] =
-            TryCopyInitialization(S, Args[ArgIdx], Proto->getParamType(ArgIdx),
+            TryCopyInitialization(S, Args[ArgIdx], ParamTypes[ArgIdx],
                                   SuppressUserConversions,
                                   /*InOverloadResolution=*/true,
                                   /*AllowObjCWritebackConversion=*/

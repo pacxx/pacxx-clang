@@ -1689,6 +1689,18 @@ public:
                bool IsAddressOfOperand,
                std::unique_ptr<CorrectionCandidateCallback> CCC = nullptr);
 
+  /// Describes the detailed kind of a template name. Used in diagnostics.
+  enum class TemplateNameKindForDiagnostics {
+    ClassTemplate,
+    FunctionTemplate,
+    VarTemplate,
+    AliasTemplate,
+    TemplateTemplateParam,
+    DependentTemplate
+  };
+  TemplateNameKindForDiagnostics
+  getTemplateNameKindForDiagnostics(TemplateName Name);
+
   Decl *ActOnDeclarator(Scope *S, Declarator &D);
 
   NamedDecl *HandleDeclarator(Scope *S, Declarator &D,
@@ -1709,7 +1721,8 @@ public:
 
   static bool adjustContextForLocalExternDecl(DeclContext *&DC);
   void DiagnoseFunctionSpecifiers(const DeclSpec &DS);
-  void CheckShadow(Scope *S, VarDecl *D, const LookupResult& R);
+  NamedDecl *getShadowedDeclaration(const VarDecl *D, const LookupResult &R);
+  void CheckShadow(VarDecl *D, NamedDecl *ShadowedDecl, const LookupResult &R);
   void CheckShadow(Scope *S, VarDecl *D);
 
   /// Warn if 'E', which is an expression that is about to be modified, refers
@@ -1790,9 +1803,8 @@ public:
   bool SetParamDefaultArgument(ParmVarDecl *Param, Expr *DefaultArg,
                                SourceLocation EqualLoc);
 
-  void AddInitializerToDecl(Decl *dcl, Expr *init, bool DirectInit,
-                            bool TypeMayContainAuto);
-  void ActOnUninitializedDecl(Decl *dcl, bool TypeMayContainAuto);
+  void AddInitializerToDecl(Decl *dcl, Expr *init, bool DirectInit);
+  void ActOnUninitializedDecl(Decl *dcl);
   void ActOnInitializerError(Decl *Dcl);
   bool canInitializeWithParenthesizedList(QualType TargetType);
 
@@ -1807,8 +1819,7 @@ public:
   void FinalizeDeclaration(Decl *D);
   DeclGroupPtrTy FinalizeDeclaratorGroup(Scope *S, const DeclSpec &DS,
                                          ArrayRef<Decl *> Group);
-  DeclGroupPtrTy BuildDeclaratorGroup(MutableArrayRef<Decl *> Group,
-                                      bool TypeMayContainAuto = true);
+  DeclGroupPtrTy BuildDeclaratorGroup(MutableArrayRef<Decl *> Group);
 
   /// Should be called on all declarations that might have attached
   /// documentation comments.
@@ -4920,8 +4931,7 @@ public:
                          TypeSourceInfo *AllocTypeInfo,
                          Expr *ArraySize,
                          SourceRange DirectInitRange,
-                         Expr *Initializer,
-                         bool TypeMayContainAuto = true);
+                         Expr *Initializer);
 
   bool CheckAllocatedType(QualType AllocType, SourceLocation Loc,
                           SourceRange R);
@@ -5324,6 +5334,9 @@ public:
   /// was successfully completed.
   ExprResult ActOnLambdaExpr(SourceLocation StartLoc, Stmt *Body,
                              Scope *CurScope);
+
+  /// \brief Diagnose if an explicit lambda capture is unused.
+  void DiagnoseUnusedLambdaCapture(const sema::LambdaScopeInfo::Capture &From);
 
   /// \brief Complete a lambda-expression having processed and attached the
   /// lambda body.
@@ -8581,6 +8594,12 @@ public:
   /// Called on well-formed '\#pragma omp target teams distribute parallel for
   /// simd' after parsing of the associated statement.
   StmtResult ActOnOpenMPTargetTeamsDistributeParallelForSimdDirective(
+      ArrayRef<OMPClause *> Clauses, Stmt *AStmt, SourceLocation StartLoc,
+      SourceLocation EndLoc,
+      llvm::DenseMap<ValueDecl *, Expr *> &VarsWithImplicitDSA);
+  /// Called on well-formed '\#pragma omp target teams distribute simd' after
+  /// parsing of the associated statement.
+  StmtResult ActOnOpenMPTargetTeamsDistributeSimdDirective(
       ArrayRef<OMPClause *> Clauses, Stmt *AStmt, SourceLocation StartLoc,
       SourceLocation EndLoc,
       llvm::DenseMap<ValueDecl *, Expr *> &VarsWithImplicitDSA);

@@ -1531,7 +1531,7 @@ bool Generic_GCC::GCCInstallationDetector::getBiarchSibling(Multilib &M) const {
   static const char *const AArch64LibDirs[] = {"/lib64", "/lib"};
   static const char *const AArch64Triples[] = {
       "aarch64-none-linux-gnu", "aarch64-linux-gnu", "aarch64-linux-android",
-      "aarch64-redhat-linux"};
+      "aarch64-redhat-linux", "aarch64-suse-linux"};
   static const char *const AArch64beLibDirs[] = {"/lib"};
   static const char *const AArch64beTriples[] = {"aarch64_be-none-linux-gnu",
                                                  "aarch64_be-linux-gnu"};
@@ -3812,6 +3812,7 @@ ToolChain::CXXStdlibType NetBSD::GetDefaultCXXStdlibType() const {
   if (Major >= 7 || Major == 0) {
     switch (getArch()) {
     case llvm::Triple::aarch64:
+    case llvm::Triple::aarch64_be:
     case llvm::Triple::arm:
     case llvm::Triple::armeb:
     case llvm::Triple::thumb:

@@ -6403,6 +6403,23 @@ static bool CheckArrow(Sema& S, QualType& ObjectType, Expr *&Base,
   return false;
 }
 
+/// \brief Check if it's ok to try and recover dot pseudo destructor calls on
+/// pointer objects.
+static bool
+canRecoverDotPseudoDestructorCallsOnPointerObjects(Sema &SemaRef,
+                                                   QualType DestructedType) {
+  // If this is a record type, check if its destructor is callable.
+  if (auto *RD = DestructedType->getAsCXXRecordDecl()) {
+    if (CXXDestructorDecl *D = SemaRef.LookupDestructor(RD))
+      return SemaRef.CanUseDecl(D, /*TreatUnavailableAsInvalid=*/false);
+    return false;
+  }
+
+  // Otherwise, check if it's a type for which it's valid to use a pseudo-dtor.
+  return DestructedType->isDependentType() || DestructedType->isScalarType() ||
+         DestructedType->isVectorType();
+}
+
 ExprResult Sema::BuildPseudoDestructorExpr(Expr *Base,
                                            SourceLocation OpLoc,
                                            tok::TokenKind OpKind,
@@ -6437,15 +6454,36 @@ ExprResult Sema::BuildPseudoDestructorExpr(Expr *Base,
       = DestructedTypeInfo->getTypeLoc().getLocalSourceRange().getBegin();
     if (!DestructedType->isDependentType() && !ObjectType->isDependentType()) {
       if (!Context.hasSameUnqualifiedType(DestructedType, ObjectType)) {
-        Diag(DestructedTypeStart, diag::err_pseudo_dtor_type_mismatch)
-          << ObjectType << DestructedType << Base->getSourceRange()
-          << DestructedTypeInfo->getTypeLoc().getLocalSourceRange();
+        // Detect dot pseudo destructor calls on pointer objects, e.g.:
+        //   Foo *foo;
+        //   foo.~Foo();
+        if (OpKind == tok::period && ObjectType->isPointerType() &&
+            Context.hasSameUnqualifiedType(DestructedType,
+                                           ObjectType->getPointeeType())) {
+          auto Diagnostic =
+              Diag(OpLoc, diag::err_typecheck_member_reference_suggestion)
+              << ObjectType << /*IsArrow=*/0 << Base->getSourceRange();
 
-        // Recover by setting the destructed type to the object type.
-        DestructedType = ObjectType;
-        DestructedTypeInfo = Context.getTrivialTypeSourceInfo(ObjectType,
-                                                           DestructedTypeStart);
-        Destructed = PseudoDestructorTypeStorage(DestructedTypeInfo);
+          // Issue a fixit only when the destructor is valid.
+          if (canRecoverDotPseudoDestructorCallsOnPointerObjects(
+                  *this, DestructedType))
+            Diagnostic << FixItHint::CreateReplacement(OpLoc, "->");
+
+          // Recover by setting the object type to the destructed type and the
+          // operator to '->'.
+          ObjectType = DestructedType;
+          OpKind = tok::arrow;
+        } else {
+          Diag(DestructedTypeStart, diag::err_pseudo_dtor_type_mismatch)
+              << ObjectType << DestructedType << Base->getSourceRange()
+              << DestructedTypeInfo->getTypeLoc().getLocalSourceRange();
+
+          // Recover by setting the destructed type to the object type.
+          DestructedType = ObjectType;
+          DestructedTypeInfo =
+              Context.getTrivialTypeSourceInfo(ObjectType, DestructedTypeStart);
+          Destructed = PseudoDestructorTypeStorage(DestructedTypeInfo);
+        }
       } else if (DestructedType.getObjCLifetime() !=
                                                 ObjectType.getObjCLifetime()) {
 
@@ -6538,7 +6576,8 @@ ExprResult Sema::ActOnPseudoDestructorExpr(Scope *S, Expr *Base,
   if (SecondTypeName.getKind() == UnqualifiedId::IK_Identifier) {
     ParsedType T = getTypeName(*SecondTypeName.Identifier,
                                SecondTypeName.StartLocation,
-                               S, &SS, true, false, ObjectTypePtrForLookup);
+                               S, &SS, true, false, ObjectTypePtrForLookup,
+                               /*IsCtorOrDtorName*/true);
     if (!T &&
         ((SS.isSet() && !computeDeclContext(SS, false)) ||
          (!SS.isSet() && ObjectType->isDependentType()))) {
@@ -6567,10 +6606,12 @@ ExprResult Sema::ActOnPseudoDestructorExpr(Scope *S, Expr *Base,
     TypeResult T = ActOnTemplateIdType(TemplateId->SS,
                                        TemplateId->TemplateKWLoc,
                                        TemplateId->Template,
+                                       TemplateId->Name,
                                        TemplateId->TemplateNameLoc,
                                        TemplateId->LAngleLoc,
                                        TemplateArgsPtr,
-                                       TemplateId->RAngleLoc);
+                                       TemplateId->RAngleLoc,
+                                       /*IsCtorOrDtorName*/true);
     if (T.isInvalid() || !T.get()) {
       // Recover by assuming we had the right type all along.
       DestructedType = ObjectType;
@@ -6595,7 +6636,8 @@ ExprResult Sema::ActOnPseudoDestructorExpr(Scope *S, Expr *Base,
     if (FirstTypeName.getKind() == UnqualifiedId::IK_Identifier) {
       ParsedType T = getTypeName(*FirstTypeName.Identifier,
                                  FirstTypeName.StartLocation,
-                                 S, &SS, true, false, ObjectTypePtrForLookup);
+                                 S, &SS, true, false, ObjectTypePtrForLookup,
+                                 /*IsCtorOrDtorName*/true);
       if (!T) {
         Diag(FirstTypeName.StartLocation,
              diag::err_pseudo_dtor_destructor_non_type)
@@ -6616,10 +6658,12 @@ ExprResult Sema::ActOnPseudoDestructorExpr(Scope *S, Expr *Base,
       TypeResult T = ActOnTemplateIdType(TemplateId->SS,
                                          TemplateId->TemplateKWLoc,
                                          TemplateId->Template,
+                                         TemplateId->Name,
                                          TemplateId->TemplateNameLoc,
                                          TemplateId->LAngleLoc,
                                          TemplateArgsPtr,
-                                         TemplateId->RAngleLoc);
+                                         TemplateId->RAngleLoc,
+                                         /*IsCtorOrDtorName*/true);
       if (T.isInvalid() || !T.get()) {
         // Recover by dropping this type.
         ScopeType = QualType();

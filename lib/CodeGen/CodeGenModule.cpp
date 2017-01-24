@@ -2437,23 +2437,6 @@ CharUnits CodeGenModule::GetTargetTypeStoreSize(llvm::Type *Ty) const {
       getDataLayout().getTypeStoreSizeInBits(Ty));
 }
 
-static
-unsigned GetPACXXGlobalVarAddressSpace(const VarDecl *D,
-                                       unsigned AddrSpace) {
-  if (D) {
-    if (D->hasAttr<PACXXConstantAttr>())
-      AddrSpace = 4;
-    else if (D->hasAttr<PACXXSharedAttr>())
-      AddrSpace = 3;
-    else if (D->hasAttr<PACXXDeviceAttr>())
-      AddrSpace = 1;
-    else 
-      AddrSpace = 0; 
-  }
-
-  return AddrSpace;
-}
-
 unsigned CodeGenModule::GetGlobalVarAddressSpace(const VarDecl *D,
                                                  unsigned AddrSpace) {
   if (D && LangOpts.CUDA && LangOpts.CUDAIsDevice) {
@@ -2465,7 +2448,7 @@ unsigned CodeGenModule::GetGlobalVarAddressSpace(const VarDecl *D,
       AddrSpace = getContext().getTargetAddressSpace(LangAS::cuda_device);
   }
   else if (LangOpts.PACXX) 
-    AddrSpace =  GetPACXXGlobalVarAddressSpace(D, AddrSpace);
+    AddrSpace = 0;
 
   return AddrSpace;
 }
@@ -2686,6 +2669,20 @@ void CodeGenModule::EmitGlobalVarDefinition(const VarDecl *D,
         Linkage = llvm::GlobalValue::InternalLinkage;
     }
   }
+
+  // PACXX MOD: Add metadata to identify address spaces
+  if (LangOpts.PACXX) {
+    if (D->hasAttr<PACXXSharedAttr>()){
+      GV->setMetadata("pacxx.as.shared", llvm::MDNode::get(getLLVMContext(), nullptr)); 
+    }
+    if (D->hasAttr<PACXXConstantAttr>()){
+      GV->setMetadata("pacxx.as.constant", llvm::MDNode::get(getLLVMContext(), nullptr)); 
+    }
+    if (D->hasAttr<PACXXDeviceAttr>()){
+      GV->setMetadata("pacxx.as.device", llvm::MDNode::get(getLLVMContext(), nullptr)); 
+    }
+  }
+
   GV->setInitializer(Init);
 
   // If it is safe to mark the global 'constant', do so now.

@@ -2247,6 +2247,21 @@ CodeGenModule::GetOrCreateLLVMGlobal(StringRef MangledName,
       llvm::GlobalValue::ExternalLinkage, nullptr, MangledName, nullptr,
       llvm::GlobalVariable::NotThreadLocal, AddrSpace);
 
+  // PACXX MOD: Add metadata to identify address spaces
+  if (D && GV && LangOpts.PACXX) {
+    GV->setExternallyInitialized(true);
+    if (D->hasAttr<PACXXSharedAttr>()){
+      D->dump();
+      GV->setMetadata("pacxx.as.shared", llvm::MDNode::get(getLLVMContext(), nullptr)); 
+    }
+    if (D->hasAttr<PACXXConstantAttr>()){
+      GV->setMetadata("pacxx.as.constant", llvm::MDNode::get(getLLVMContext(), nullptr)); 
+    }
+    if (D->hasAttr<PACXXDeviceAttr>()){
+      GV->setMetadata("pacxx.as.device", llvm::MDNode::get(getLLVMContext(), nullptr)); 
+    }
+  } 
+ 
   // If we already created a global with the same mangled name (but different
   // type) before, take its name and remove it from its parent.
   if (Entry) {
@@ -2667,19 +2682,6 @@ void CodeGenModule::EmitGlobalVarDefinition(const VarDecl *D,
         // counterparts. It's not clear yet whether it's nvcc's bug or
         // a feature, but we've got to do the same for compatibility.
         Linkage = llvm::GlobalValue::InternalLinkage;
-    }
-  }
-
-  // PACXX MOD: Add metadata to identify address spaces
-  if (LangOpts.PACXX) {
-    if (D->hasAttr<PACXXSharedAttr>()){
-      GV->setMetadata("pacxx.as.shared", llvm::MDNode::get(getLLVMContext(), nullptr)); 
-    }
-    if (D->hasAttr<PACXXConstantAttr>()){
-      GV->setMetadata("pacxx.as.constant", llvm::MDNode::get(getLLVMContext(), nullptr)); 
-    }
-    if (D->hasAttr<PACXXDeviceAttr>()){
-      GV->setMetadata("pacxx.as.device", llvm::MDNode::get(getLLVMContext(), nullptr)); 
     }
   }
 

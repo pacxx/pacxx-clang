@@ -2249,9 +2249,9 @@ CodeGenModule::GetOrCreateLLVMGlobal(StringRef MangledName,
 
   // PACXX MOD: Add metadata to identify address spaces
   if (D && GV && LangOpts.PACXX) {
-    GV->setExternallyInitialized(true);
     if (D->hasAttr<PACXXSharedAttr>()){
       D->dump();
+      GV->setExternallyInitialized(true);
       GV->setMetadata("pacxx.as.shared", llvm::MDNode::get(getLLVMContext(), nullptr)); 
     }
     if (D->hasAttr<PACXXConstantAttr>()){

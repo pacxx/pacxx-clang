@@ -2250,7 +2250,6 @@ CodeGenModule::GetOrCreateLLVMGlobal(StringRef MangledName,
   // PACXX MOD: Add metadata to identify address spaces
   if (D && GV && LangOpts.PACXX) {
     if (D->hasAttr<PACXXSharedAttr>()){
-      D->dump();
       GV->setExternallyInitialized(true);
       GV->setMetadata("pacxx.as.shared", llvm::MDNode::get(getLLVMContext(), nullptr)); 
     }
@@ -2682,6 +2681,22 @@ void CodeGenModule::EmitGlobalVarDefinition(const VarDecl *D,
         // counterparts. It's not clear yet whether it's nvcc's bug or
         // a feature, but we've got to do the same for compatibility.
         Linkage = llvm::GlobalValue::InternalLinkage;
+    }
+  }
+
+  // PACXX MOD: Add metadata to identify address spaces
+  if (GV && LangOpts.PACXX) {
+    if (D->hasAttr<PACXXSharedAttr>()){
+      D->dump();
+      GV->setMetadata("pacxx.as.shared", llvm::MDNode::get(getLLVMContext(), nullptr));
+    }
+    if (D->hasAttr<PACXXConstantAttr>()){
+      GV->setExternallyInitialized(true);
+      GV->setMetadata("pacxx.as.constant", llvm::MDNode::get(getLLVMContext(), nullptr));
+    }
+    if (D->hasAttr<PACXXDeviceAttr>()){
+      GV->setExternallyInitialized(true);
+      GV->setMetadata("pacxx.as.device", llvm::MDNode::get(getLLVMContext(), nullptr));
     }
   }
 

@@ -401,6 +401,21 @@ void CodeGenFunction::EmitStaticVarDecl(const VarDecl &D,
   if (D.hasAttr<AnnotateAttr>())
     CGM.AddGlobalAnnotations(&D, var);
 
+  // PACXX MOD: Add metadata to identify address spaces
+  if (var && getLangOpts().PACXX) {
+    if (D.hasAttr<PACXXSharedAttr>()){
+      var->setMetadata("pacxx.as.shared", llvm::MDNode::get(getLLVMContext(), nullptr));
+    }
+    if (D.hasAttr<PACXXConstantAttr>()){
+      var->setExternallyInitialized(true);
+      var->setMetadata("pacxx.as.constant", llvm::MDNode::get(getLLVMContext(), nullptr));
+    }
+    if (D.hasAttr<PACXXDeviceAttr>()){
+      var->setExternallyInitialized(true);
+      var->setMetadata("pacxx.as.device", llvm::MDNode::get(getLLVMContext(), nullptr));
+    }
+  }
+
   if (const SectionAttr *SA = D.getAttr<SectionAttr>())
     var->setSection(SA->getName());
 

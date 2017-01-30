@@ -2554,7 +2554,7 @@ void CodeGenModule::EmitGlobalVarDefinition(const VarDecl *D,
   // error cases, so we just need to set Init to UndefValue.
   if ((getLangOpts().CUDA && getLangOpts().CUDAIsDevice &&
       D->hasAttr<CUDASharedAttr>()) || (getLangOpts().PACXX && D->hasAttr<PACXXSharedAttr>())){
-    Init = llvm::UndefValue::get(getTypes().ConvertType(ASTTy)); D->dump();}
+    Init = llvm::UndefValue::get(getTypes().ConvertType(ASTTy));}
   else if (!InitExpr) {
     // This is a tentative definition; tentative definitions are
     // implicitly initialized with { 0 }.

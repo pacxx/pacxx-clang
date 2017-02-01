@@ -4439,6 +4439,11 @@ bool UnnamedLocalNoLinkageFinder::VisitAutoType(const AutoType *T) {
   return Visit(T->getDeducedType());
 }
 
+bool UnnamedLocalNoLinkageFinder::VisitDeducedTemplateSpecializationType(
+    const DeducedTemplateSpecializationType *T) {
+  return Visit(T->getDeducedType());
+}
+
 bool UnnamedLocalNoLinkageFinder::VisitRecordType(const RecordType* T) {
   return VisitTagDecl(T->getDecl());
 }
@@ -5825,8 +5830,9 @@ Sema::BuildExpressionFromDeclTemplateArgument(const TemplateArgument &Arg,
     if (RefExpr.isInvalid())
       return ExprError();
 
-    if (T->isFunctionType() || T->isArrayType()) {
-      // Decay functions and arrays.
+    if (!Context.hasSameUnqualifiedType(ParamType->getPointeeType(), T) &&
+        (T->isFunctionType() || T->isArrayType())) {
+      // Decay functions and arrays unless we're forming a pointer to array.
       RefExpr = DefaultFunctionArrayConversion(RefExpr.get());
       if (RefExpr.isInvalid())
         return ExprError();
@@ -8784,6 +8790,19 @@ Sema::CheckTypenameType(ElaboratedTypeKeyword Keyword,
       return Context.getElaboratedType(Keyword,
                                        QualifierLoc.getNestedNameSpecifier(),
                                        Context.getTypeDeclType(Type));
+    }
+
+    // C++ [dcl.type.simple]p2:
+    //   A type-specifier of the form
+    //     typename[opt] nested-name-specifier[opt] template-name
+    //   is a placeholder for a deduced class type [...].
+    if (getLangOpts().CPlusPlus1z) {
+      if (auto *TD = getAsTypeTemplateDecl(Result.getFoundDecl())) {
+        return Context.getElaboratedType(
+            Keyword, QualifierLoc.getNestedNameSpecifier(),
+            Context.getDeducedTemplateSpecializationType(TemplateName(TD),
+                                                         QualType(), false));
+      }
     }
 
     DiagID = diag::err_typename_nested_not_type;

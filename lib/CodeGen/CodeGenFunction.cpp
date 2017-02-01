@@ -200,7 +200,8 @@ TypeEvaluationKind CodeGenFunction::getEvaluationKind(QualType type) {
       llvm_unreachable("non-canonical or dependent type in IR-generation");
 
     case Type::Auto:
-      llvm_unreachable("undeduced auto type in IR-generation");
+    case Type::DeducedTemplateSpecialization:
+      llvm_unreachable("undeduced type in IR-generation");
 
     // Various scalar types.
     case Type::Builtin:
@@ -907,8 +908,12 @@ void CodeGenFunction::StartFunction(GlobalDecl GD,
   // inlining, we just add an attribute to insert a mcount call in backend.
   // The attribute "counting-function" is set to mcount function name which is
   // architecture dependent.
-  if (CGM.getCodeGenOpts().InstrumentForProfiling)
-    Fn->addFnAttr("counting-function", getTarget().getMCountName());
+  if (CGM.getCodeGenOpts().InstrumentForProfiling) {
+    if (CGM.getCodeGenOpts().CallFEntry)
+      Fn->addFnAttr("fentry-call", "true");
+    else
+      Fn->addFnAttr("counting-function", getTarget().getMCountName());
+  }
 
   if (RetTy->isVoidType()) {
     // Void type; nothing to return.
@@ -1947,6 +1952,7 @@ void CodeGenFunction::EmitVariablyModifiedType(QualType type) {
     case Type::Typedef:
     case Type::Decltype:
     case Type::Auto:
+    case Type::DeducedTemplateSpecialization:
       // Stop walking: nothing to do.
       return;
 

@@ -2982,16 +2982,17 @@ public:
   ExprResult RebuildObjCIvarRefExpr(Expr *BaseArg, ObjCIvarDecl *Ivar,
                                           SourceLocation IvarLoc,
                                           bool IsArrow, bool IsFreeIvar) {
-    // FIXME: We lose track of the IsFreeIvar bit.
     CXXScopeSpec SS;
     DeclarationNameInfo NameInfo(Ivar->getDeclName(), IvarLoc);
-    return getSema().BuildMemberReferenceExpr(BaseArg, BaseArg->getType(),
-                                              /*FIXME:*/IvarLoc, IsArrow,
-                                              SS, SourceLocation(),
-                                              /*FirstQualifierInScope=*/nullptr,
-                                              NameInfo,
-                                              /*TemplateArgs=*/nullptr,
-                                              /*S=*/nullptr);
+    ExprResult Result = getSema().BuildMemberReferenceExpr(
+        BaseArg, BaseArg->getType(),
+        /*FIXME:*/ IvarLoc, IsArrow, SS, SourceLocation(),
+        /*FirstQualifierInScope=*/nullptr, NameInfo,
+        /*TemplateArgs=*/nullptr,
+        /*S=*/nullptr);
+    if (IsFreeIvar && Result.isUsable())
+      cast<ObjCIvarRefExpr>(Result.get())->setIsFreeIvar(IsFreeIvar);
+    return Result;
   }
 
   /// \brief Build a new Objective-C property reference expression.
@@ -3615,6 +3616,19 @@ TreeTransform<Derived>
   case DeclarationName::CXXLiteralOperatorName:
   case DeclarationName::CXXUsingDirective:
     return NameInfo;
+
+  case DeclarationName::CXXDeductionGuideName: {
+    TemplateDecl *OldTemplate = Name.getCXXDeductionGuideTemplate();
+    TemplateDecl *NewTemplate = cast_or_null<TemplateDecl>(
+        getDerived().TransformDecl(NameInfo.getLoc(), OldTemplate));
+    if (!NewTemplate)
+      return DeclarationNameInfo();
+
+    DeclarationNameInfo NewNameInfo(NameInfo);
+    NewNameInfo.setName(
+        SemaRef.Context.DeclarationNames.getCXXDeductionGuideName(NewTemplate));
+    return NewNameInfo;
+  }
 
   case DeclarationName::CXXConstructorName:
   case DeclarationName::CXXDestructorName:
@@ -4589,8 +4603,15 @@ TreeTransform<Derived>::TransformVariableArrayType(TypeLocBuilder &TLB,
   if (ElementType.isNull())
     return QualType();
 
-  ExprResult SizeResult
-    = getDerived().TransformExpr(T->getSizeExpr());
+  ExprResult SizeResult;
+  {
+    EnterExpressionEvaluationContext Context(SemaRef,
+                                             Sema::PotentiallyEvaluated);
+    SizeResult = getDerived().TransformExpr(T->getSizeExpr());
+  }
+  if (SizeResult.isInvalid())
+    return QualType();
+  SizeResult = SemaRef.ActOnFinishFullExpr(SizeResult.get());
   if (SizeResult.isInvalid())
     return QualType();
 

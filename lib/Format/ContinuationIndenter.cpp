@@ -420,7 +420,7 @@ void ContinuationIndenter::addTokenOnCurrentLine(LineState &State, bool DryRun,
       P->getPrecedence() != prec::Assignment &&
       P->getPrecedence() != prec::Relational) {
     bool BreakBeforeOperator =
-        P->is(tok::lessless) ||
+        P->MustBreakBefore || P->is(tok::lessless) ||
         (P->is(TT_BinaryOperator) &&
          Style.BreakBeforeBinaryOperators != FormatStyle::BOS_None) ||
         (P->is(TT_ConditionalExpr) && Style.BreakBeforeTernaryOperators);
@@ -429,7 +429,7 @@ void ContinuationIndenter::addTokenOnCurrentLine(LineState &State, bool DryRun,
     // does not help.
     bool HasTwoOperands =
         P->OperatorIndex == 0 && !P->NextOperator && !P->is(TT_ConditionalExpr);
-    if ((!BreakBeforeOperator && !HasTwoOperands) ||
+    if ((!BreakBeforeOperator && !(HasTwoOperands && Style.AlignOperands)) ||
         (!State.Stack.back().LastOperatorWrapped && BreakBeforeOperator))
       State.Stack.back().NoLineBreakInOperand = true;
   }
@@ -837,8 +837,8 @@ unsigned ContinuationIndenter::moveStateToNextToken(LineState &State,
   }
 
   moveStatePastFakeLParens(State, Newline);
-  moveStatePastScopeOpener(State, Newline);
   moveStatePastScopeCloser(State);
+  moveStatePastScopeOpener(State, Newline);
   moveStatePastFakeRParens(State);
 
   if (Current.isStringLiteral() && State.StartOfStringLiteral == 0)
@@ -1060,7 +1060,7 @@ void ContinuationIndenter::moveStatePastScopeCloser(LineState &State) {
   // If we encounter a closing ), ], } or >, we can remove a level from our
   // stacks.
   if (State.Stack.size() > 1 &&
-      (Current.isOneOf(tok::r_paren, tok::r_square) ||
+      (Current.isOneOf(tok::r_paren, tok::r_square, TT_TemplateString) ||
        (Current.is(tok::r_brace) && State.NextToken != State.Line->First) ||
        State.NextToken->is(TT_TemplateCloser)))
     State.Stack.pop_back();
@@ -1213,7 +1213,7 @@ unsigned ContinuationIndenter::breakProtrudingToken(const FormatToken &Current,
     BreakableToken::Split SplitBefore(StringRef::npos, 0);
     if (ReflowInProgress) {
       SplitBefore = Token->getSplitBefore(LineIndex, RemainingTokenColumns,
-                                          RemainingSpace);
+                                          RemainingSpace, CommentPragmasRegex);
     }
     ReflowInProgress = SplitBefore.first != StringRef::npos;
     unsigned TailOffset =

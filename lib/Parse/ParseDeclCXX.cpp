@@ -576,6 +576,7 @@ bool Parser::ParseUsingDeclarator(unsigned Context, UsingDeclarator &D) {
             /*AllowDestructorName=*/true,
             /*AllowConstructorName=*/!(Tok.is(tok::identifier) &&
                                        NextToken().is(tok::equal)),
+            /*AllowDeductionGuide=*/false,
             nullptr, D.TemplateKWLoc, D.Name))
       return true;
   }
@@ -1076,7 +1077,7 @@ TypeResult Parser::ParseBaseTypeSpecifier(SourceLocation &BaseLoc,
     TemplateIdAnnotation *TemplateId = takeTemplateIdAnnotation(Tok);
     if (TemplateId->Kind == TNK_Type_template ||
         TemplateId->Kind == TNK_Dependent_template_name) {
-      AnnotateTemplateIdTokenAsType();
+      AnnotateTemplateIdTokenAsType(/*IsClassName*/true);
 
       assert(Tok.is(tok::annot_typename) && "template-id -> type failed");
       ParsedType Type = getTypeAnnotation(Tok);
@@ -1124,10 +1125,10 @@ TypeResult Parser::ParseBaseTypeSpecifier(SourceLocation &BaseLoc,
 
     // Parse the full template-id, then turn it into a type.
     if (AnnotateTemplateIdToken(Template, TNK, SS, SourceLocation(),
-                                TemplateName, true))
+                                TemplateName))
       return true;
-    if (TNK == TNK_Dependent_template_name)
-      AnnotateTemplateIdTokenAsType();
+    if (TNK == TNK_Type_template || TNK == TNK_Dependent_template_name)
+      AnnotateTemplateIdTokenAsType(/*IsClassName*/true);
 
     // If we didn't end up with a typename token, there's nothing more we
     // can do.
@@ -1145,7 +1146,7 @@ TypeResult Parser::ParseBaseTypeSpecifier(SourceLocation &BaseLoc,
   // We have an identifier; check whether it is actually a type.
   IdentifierInfo *CorrectedII = nullptr;
   ParsedType Type = Actions.getTypeName(
-      *Id, IdLoc, getCurScope(), &SS, true, false, nullptr,
+      *Id, IdLoc, getCurScope(), &SS, /*IsClassName=*/true, false, nullptr,
       /*IsCtorOrDtorName=*/false,
       /*NonTrivialTypeSourceInfo=*/true,
       /*IsClassTemplateDeductionContext*/ false, &CorrectedII);
@@ -2284,7 +2285,11 @@ void Parser::MaybeParseAndDiagnoseDeclSpecAfterCXX11VirtSpecifierSeq(
 
   // GNU-style and C++11 attributes are not allowed here, but they will be
   // handled by the caller.  Diagnose everything else.
-  ParseTypeQualifierListOpt(DS, AR_NoAttributesParsed, false);
+  ParseTypeQualifierListOpt(
+      DS, AR_NoAttributesParsed, false,
+      /*IdentifierRequired=*/false, llvm::function_ref<void()>([&]() {
+        Actions.CodeCompleteFunctionQualifiers(DS, D, &VS);
+      }));
   D.ExtendWithDeclSpec(DS);
 
   if (D.isFunctionDeclarator()) {
@@ -2426,8 +2431,8 @@ Parser::ParseCXXClassMemberDeclaration(AccessSpecifier AS,
       // Try to parse an unqualified-id.
       SourceLocation TemplateKWLoc;
       UnqualifiedId Name;
-      if (ParseUnqualifiedId(SS, false, true, true, nullptr, TemplateKWLoc,
-                             Name)) {
+      if (ParseUnqualifiedId(SS, false, true, true, false, nullptr,
+                             TemplateKWLoc, Name)) {
         SkipUntil(tok::semi);
         return nullptr;
       }
@@ -2458,9 +2463,10 @@ Parser::ParseCXXClassMemberDeclaration(AccessSpecifier AS,
   if (Tok.is(tok::kw_template)) {
     assert(!TemplateInfo.TemplateParams &&
            "Nested template improperly parsed?");
+    ObjCDeclContextSwitch ObjCDC(*this);
     SourceLocation DeclEnd;
     return DeclGroupPtrTy::make(
-        DeclGroupRef(ParseDeclarationStartingWithTemplate(
+        DeclGroupRef(ParseTemplateDeclarationOrSpecialization(
             Declarator::MemberContext, DeclEnd, AS, AccessAttrs)));
   }
 
@@ -3377,7 +3383,7 @@ MemInitResult Parser::ParseMemInitializer(Decl *ConstructorDecl) {
     TemplateIdAnnotation *TemplateId = takeTemplateIdAnnotation(Tok);
     if (TemplateId->Kind == TNK_Type_template ||
         TemplateId->Kind == TNK_Dependent_template_name) {
-      AnnotateTemplateIdTokenAsType();
+      AnnotateTemplateIdTokenAsType(/*IsClassName*/true);
       assert(Tok.is(tok::annot_typename) && "template-id -> type failed");
       TemplateTypeTy = getTypeAnnotation(Tok);
     }

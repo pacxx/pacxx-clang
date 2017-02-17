@@ -3365,8 +3365,10 @@ collectSanitizerRuntimes(const ToolChain &TC, const ArgList &Args,
     if (SanArgs.linkCXXRuntimes())
       StaticRuntimes.push_back("ubsan_standalone_cxx");
   }
-  if (SanArgs.needsSafeStackRt())
-    StaticRuntimes.push_back("safestack");
+  if (SanArgs.needsSafeStackRt()) {
+    NonWholeStaticRuntimes.push_back("safestack");
+    RequiredSymbols.push_back("__safestack_init");
+  }
   if (SanArgs.needsCfiRt())
     StaticRuntimes.push_back("cfi");
   if (SanArgs.needsCfiDiagRt()) {
@@ -3417,7 +3419,7 @@ static bool addSanitizerRuntimes(const ToolChain &TC, const ArgList &Args,
   if (SanArgs.hasCrossDsoCfi() && !AddExportDynamic)
     CmdArgs.push_back("-export-dynamic-symbol=__cfi_check");
 
-  return !StaticRuntimes.empty();
+  return !StaticRuntimes.empty() || !NonWholeStaticRuntimes.empty();
 }
 
 static bool addXRayRuntime(const ToolChain &TC, const ArgList &Args,
@@ -5011,6 +5013,11 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   RenderDebugEnablingArgs(Args, CmdArgs, DebugInfoKind, DwarfVersion,
                           DebuggerTuning);
 
+  // -fdebug-macro turns on macro debug info generation.
+  if (Args.hasFlag(options::OPT_fdebug_macro, options::OPT_fno_debug_macro,
+                   false))
+    CmdArgs.push_back("-debug-info-macro");
+
   // -ggnu-pubnames turns on gnu style pubnames in the backend.
   if (Args.hasArg(options::OPT_ggnu_pubnames)) {
     CmdArgs.push_back("-backend-option");
@@ -5057,6 +5064,11 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       case llvm::Triple::x86_64:
       case llvm::Triple::arm:
       case llvm::Triple::aarch64:
+      case llvm::Triple::ppc64le:
+      case llvm::Triple::mips:
+      case llvm::Triple::mipsel:
+      case llvm::Triple::mips64:
+      case llvm::Triple::mips64el:
         // Supported.
         break;
       default:
@@ -8696,6 +8708,10 @@ void darwin::Linker::ConstructJob(Compilation &C, const JobAction &JA,
 
     // Let the tool chain choose which runtime library to link.
     getMachOToolChain().AddLinkRuntimeLibArgs(Args, CmdArgs);
+
+    // No need to do anything for pthreads. Claim argument to avoid warning.
+    Args.ClaimAllArgs(options::OPT_pthread);
+    Args.ClaimAllArgs(options::OPT_pthreads);
   }
 
   if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nostartfiles)) {
@@ -10151,7 +10167,7 @@ void gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   Args.ClaimAllArgs(options::OPT_w);
 
   const char *Exec = Args.MakeArgString(ToolChain.GetLinkerPath());
-  if (llvm::sys::path::filename(Exec) == "lld") {
+  if (llvm::sys::path::stem(Exec) == "lld") {
     CmdArgs.push_back("-flavor");
     CmdArgs.push_back("old-gnu");
     CmdArgs.push_back("-target");
@@ -11000,13 +11016,14 @@ void visualstudio::Linker::ConstructJob(Compilation &C, const JobAction &JA,
     } else if (DLL) {
       CmdArgs.push_back(TC.getCompilerRTArgString(Args, "asan_dll_thunk"));
     } else {
-      for (const auto &Lib : {"asan", "asan_cxx"})
+      for (const auto &Lib : {"asan", "asan_cxx"}) {
         CmdArgs.push_back(TC.getCompilerRTArgString(Args, Lib));
-      // Make sure the linker consider all object files from the static library.
-      // This is necessary because instrumented dlls need access to all the
-      // interface exported by the static lib in the main executable.
-      CmdArgs.push_back(Args.MakeArgString(std::string("-wholearchive:") +
-          TC.getCompilerRT(Args, "asan")));
+        // Make sure the linker consider all object files from the static lib.
+        // This is necessary because instrumented dlls need access to all the
+        // interface exported by the static lib in the main executable.
+        CmdArgs.push_back(Args.MakeArgString(std::string("-wholearchive:") +
+            TC.getCompilerRT(Args, Lib)));
+      }
     }
   }
 

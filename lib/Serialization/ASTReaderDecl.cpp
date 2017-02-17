@@ -240,6 +240,7 @@ namespace clang {
     /// \brief Determine whether this declaration has a pending body.
     bool hasPendingBody() const { return HasPendingBody; }
 
+    void ReadFunctionDefinition(FunctionDecl *FD);
     void Visit(Decl *D);
 
     void UpdateDecl(Decl *D);
@@ -421,6 +422,17 @@ uint64_t ASTDeclReader::GetCurrentCursorOffset() {
   return Loc.F->DeclsCursor.GetCurrentBitNo() + Loc.F->GlobalBitOffset;
 }
 
+void ASTDeclReader::ReadFunctionDefinition(FunctionDecl *FD) {
+  if (auto *CD = dyn_cast<CXXConstructorDecl>(FD)) {
+    CD->NumCtorInitializers = Record.readInt();
+    if (CD->NumCtorInitializers)
+      CD->CtorInitializers = ReadGlobalOffset();
+  }
+  // Store the offset of the body so we can lazily load it later.
+  Reader.PendingBodies[FD] = GetCurrentCursorOffset();
+  HasPendingBody = true;
+}
+
 void ASTDeclReader::Visit(Decl *D) {
   DeclVisitor<ASTDeclReader, void>::Visit(D);
 
@@ -457,15 +469,8 @@ void ASTDeclReader::Visit(Decl *D) {
     // We only read it if FD doesn't already have a body (e.g., from another
     // module).
     // FIXME: Can we diagnose ODR violations somehow?
-    if (Record.readInt()) {
-      if (auto *CD = dyn_cast<CXXConstructorDecl>(FD)) {
-        CD->NumCtorInitializers = Record.readInt();
-        if (CD->NumCtorInitializers)
-          CD->CtorInitializers = ReadGlobalOffset();
-      }
-      Reader.PendingBodies[FD] = GetCurrentCursorOffset();
-      HasPendingBody = true;
-    }
+    if (Record.readInt())
+      ReadFunctionDefinition(FD);
   }
 }
 
@@ -743,6 +748,7 @@ void ASTDeclReader::VisitFunctionDecl(FunctionDecl *FD) {
   FD->SClass = (StorageClass)Record.readInt();
   FD->IsInline = Record.readInt();
   FD->IsInlineSpecified = Record.readInt();
+  FD->IsExplicitSpecified = Record.readInt();
   FD->IsVirtualAsWritten = Record.readInt();
   FD->IsPure = Record.readInt();
   FD->HasInheritedPrototype = Record.readInt();
@@ -1809,8 +1815,6 @@ void ASTDeclReader::VisitCXXConstructorDecl(CXXConstructorDecl *D) {
   }
 
   VisitCXXMethodDecl(D);
-
-  D->IsExplicitSpecified = Record.readInt();
 }
 
 void ASTDeclReader::VisitCXXDestructorDecl(CXXDestructorDecl *D) {
@@ -1826,7 +1830,6 @@ void ASTDeclReader::VisitCXXDestructorDecl(CXXDestructorDecl *D) {
 
 void ASTDeclReader::VisitCXXConversionDecl(CXXConversionDecl *D) {
   VisitCXXMethodDecl(D);
-  D->IsExplicitSpecified = Record.readInt();
 }
 
 void ASTDeclReader::VisitImportDecl(ImportDecl *D) {
@@ -1878,6 +1881,7 @@ DeclID ASTDeclReader::VisitTemplateDecl(TemplateDecl *D) {
   DeclID PatternID = ReadDeclID();
   NamedDecl *TemplatedDecl = cast_or_null<NamedDecl>(Reader.GetDecl(PatternID));
   TemplateParameterList *TemplateParams = Record.readTemplateParameterList();
+  // FIXME handle associated constraints
   D->init(TemplatedDecl, TemplateParams);
 
   return PatternID;
@@ -2652,6 +2656,44 @@ static bool isSameTemplateParameterList(const TemplateParameterList *X,
   return true;
 }
 
+/// Determine whether the attributes we can overload on are identical for A and
+/// B. Expects A and B to (otherwise) have the same type.
+static bool hasSameOverloadableAttrs(const FunctionDecl *A,
+                                     const FunctionDecl *B) {
+  SmallVector<const EnableIfAttr *, 4> AEnableIfs;
+  // Since this is an equality check, we can ignore that enable_if attrs show up
+  // in reverse order.
+  for (const auto *EIA : A->specific_attrs<EnableIfAttr>())
+    AEnableIfs.push_back(EIA);
+
+  SmallVector<const EnableIfAttr *, 4> BEnableIfs;
+  for (const auto *EIA : B->specific_attrs<EnableIfAttr>())
+    BEnableIfs.push_back(EIA);
+
+  // Two very common cases: either we have 0 enable_if attrs, or we have an
+  // unequal number of enable_if attrs.
+  if (AEnableIfs.empty() && BEnableIfs.empty())
+    return true;
+
+  if (AEnableIfs.size() != BEnableIfs.size())
+    return false;
+
+  llvm::FoldingSetNodeID Cand1ID, Cand2ID;
+  for (unsigned I = 0, E = AEnableIfs.size(); I != E; ++I) {
+    Cand1ID.clear();
+    Cand2ID.clear();
+
+    AEnableIfs[I]->getCond()->Profile(Cand1ID, A->getASTContext(), true);
+    BEnableIfs[I]->getCond()->Profile(Cand2ID, B->getASTContext(), true);
+    if (Cand1ID != Cand2ID)
+      return false;
+  }
+
+  // FIXME: This doesn't currently consider pass_object_size attributes, since
+  // we aren't guaranteed that A and B have valid parameter lists yet.
+  return true;
+}
+
 /// \brief Determine whether the two declarations refer to the same entity.
 static bool isSameEntity(NamedDecl *X, NamedDecl *Y) {
   assert(X->getDeclName() == Y->getDeclName() && "Declaration name mismatch!");
@@ -2707,8 +2749,10 @@ static bool isSameEntity(NamedDecl *X, NamedDecl *Y) {
                         CtorY->getInheritedConstructor().getConstructor()))
         return false;
     }
-    return (FuncX->getLinkageInternal() == FuncY->getLinkageInternal()) &&
-      FuncX->getASTContext().hasSameType(FuncX->getType(), FuncY->getType());
+    return FuncX->getLinkageInternal() == FuncY->getLinkageInternal() &&
+           FuncX->getASTContext().hasSameType(FuncX->getType(),
+                                              FuncY->getType()) &&
+           hasSameOverloadableAttrs(FuncX, FuncY);
   }
 
   // Variables with the same type and linkage match.
@@ -3862,14 +3906,7 @@ void ASTDeclReader::UpdateDecl(Decl *D) {
         });
       }
       FD->setInnerLocStart(ReadSourceLocation());
-      if (auto *CD = dyn_cast<CXXConstructorDecl>(FD)) {
-        CD->NumCtorInitializers = Record.readInt();
-        if (CD->NumCtorInitializers)
-          CD->CtorInitializers = ReadGlobalOffset();
-      }
-      // Store the offset of the body so we can lazily load it later.
-      Reader.PendingBodies[FD] = GetCurrentCursorOffset();
-      HasPendingBody = true;
+      ReadFunctionDefinition(FD);
       assert(Record.getIdx() == Record.size() && "lazy body must be last");
       break;
     }

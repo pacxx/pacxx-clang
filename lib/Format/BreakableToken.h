@@ -21,6 +21,7 @@
 #include "Encoding.h"
 #include "TokenAnnotator.h"
 #include "WhitespaceManager.h"
+#include "llvm/Support/Regex.h"
 #include <utility>
 
 namespace clang {
@@ -118,7 +119,8 @@ public:
   /// needs to be reformatted before any breaks are made.
   virtual Split getSplitBefore(unsigned LineIndex,
                                unsigned PreviousEndColumn,
-                               unsigned ColumnLimit) const {
+                               unsigned ColumnLimit,
+                               llvm::Regex& CommentPragmasRegex) const {
     return Split(StringRef::npos, 0);
   }
 
@@ -238,7 +240,8 @@ protected:
 
   // Checks if the content of line LineIndex may be reflown with the previous
   // line.
-  bool mayReflow(unsigned LineIndex) const;
+  virtual bool mayReflow(unsigned LineIndex,
+                         llvm::Regex &CommentPragmasRegex) const = 0;
 
   // Contains the original text of the lines of the block comment.
   //
@@ -279,10 +282,6 @@ protected:
   // line.
   bool FirstInLine;
 
-  // In case of line comments, holds the original prefix, including trailing
-  // whitespace.
-  SmallVector<StringRef, 16> OriginalPrefix;
-
   // The prefix to use in front a line that has been reflown up.
   // For example, when reflowing the second line after the first here:
   // // comment 1
@@ -307,7 +306,8 @@ public:
   void insertBreak(unsigned LineIndex, unsigned TailOffset, Split Split,
                    WhitespaceManager &Whitespaces) override;
   Split getSplitBefore(unsigned LineIndex, unsigned PreviousEndColumn,
-                       unsigned ColumnLimit) const override;
+                       unsigned ColumnLimit,
+                       llvm::Regex &CommentPragmasRegex) const override;
   unsigned getLineLengthAfterSplitBefore(unsigned LineIndex,
                                          unsigned TailOffset,
                                          unsigned PreviousEndColumn,
@@ -317,6 +317,8 @@ public:
                                unsigned ColumnLimit,
                                Split SplitBefore,
                                WhitespaceManager &Whitespaces) override;
+  bool mayReflow(unsigned LineIndex,
+                 llvm::Regex &CommentPragmasRegex) const override;
 
 private:
   // Rearranges the whitespace between Lines[LineIndex-1] and Lines[LineIndex].
@@ -356,6 +358,10 @@ private:
 
   // Either "* " if all lines begin with a "*", or empty.
   StringRef Decoration;
+
+  // If this block comment has decorations, this is the column of the start of
+  // the decorations.
+  unsigned DecorationColumn;
 };
 
 class BreakableLineCommentSection : public BreakableComment {
@@ -371,7 +377,8 @@ public:
   void insertBreak(unsigned LineIndex, unsigned TailOffset, Split Split,
                    WhitespaceManager &Whitespaces) override;
   Split getSplitBefore(unsigned LineIndex, unsigned PreviousEndColumn,
-                       unsigned ColumnLimit) const override;
+                       unsigned ColumnLimit,
+                       llvm::Regex &CommentPragmasRegex) const override;
   unsigned getLineLengthAfterSplitBefore(unsigned LineIndex, unsigned TailOffset,
                                          unsigned PreviousEndColumn,
                                          unsigned ColumnLimit,
@@ -380,10 +387,20 @@ public:
                                unsigned ColumnLimit, Split SplitBefore,
                                WhitespaceManager &Whitespaces) override;
   void updateNextToken(LineState& State) const override;
+  bool mayReflow(unsigned LineIndex,
+                 llvm::Regex &CommentPragmasRegex) const override;
 
 private:
   unsigned getContentStartColumn(unsigned LineIndex,
                                  unsigned TailOffset) const override;
+
+  // OriginalPrefix[i] contains the original prefix of line i, including
+  // trailing whitespace before the start of the content. The indentation
+  // preceding the prefix is not included.
+  // For example, if the line is:
+  // // content
+  // then the original prefix is "// ".
+  SmallVector<StringRef, 16> OriginalPrefix;
 
   // Prefix[i] contains the intended leading "//" with trailing spaces to
   // account for the indentation of content within the comment at line i after

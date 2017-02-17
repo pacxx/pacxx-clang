@@ -963,6 +963,32 @@ bool Sema::isSameOrCompatibleFunctionType(CanQualType Param,
   return Param == Arg;
 }
 
+/// Get the index of the first template parameter that was originally from the
+/// innermost template-parameter-list. This is 0 except when we concatenate
+/// the template parameter lists of a class template and a constructor template
+/// when forming an implicit deduction guide.
+static unsigned getFirstInnerIndex(FunctionTemplateDecl *FTD) {
+  if (!FTD->isImplicit() || !FTD->getTemplatedDecl()->isDeductionGuide())
+    return 0;
+  return FTD->getDeclName().getCXXDeductionGuideTemplate()
+            ->getTemplateParameters()->size();
+}
+
+/// Determine whether a type denotes a forwarding reference.
+static bool isForwardingReference(QualType Param, unsigned FirstInnerIndex) {
+  // C++1z [temp.deduct.call]p3:
+  //   A forwarding reference is an rvalue reference to a cv-unqualified
+  //   template parameter that does not represent a template parameter of a
+  //   class template.
+  if (auto *ParamRef = Param->getAs<RValueReferenceType>()) {
+    if (ParamRef->getPointeeType().getQualifiers())
+      return false;
+    auto *TypeParm = ParamRef->getPointeeType()->getAs<TemplateTypeParmType>();
+    return TypeParm && TypeParm->getIndex() >= FirstInnerIndex;
+  }
+  return false;
+}
+
 /// \brief Deduce the template arguments by comparing the parameter type and
 /// the argument type (C++ [temp.deduct.type]).
 ///
@@ -1083,21 +1109,15 @@ DeduceTemplateArgumentsByTypeMatch(Sema &S,
       //   taking the address of a function template (14.8.2.2) or when deducing
       //   template arguments from a function declaration (14.8.2.6) and Pi and
       //   Ai are parameters of the top-level parameter-type-list of P and A,
-      //   respectively, Pi is adjusted if it is an rvalue reference to a
-      //   cv-unqualified template parameter and Ai is an lvalue reference, in
+      //   respectively, Pi is adjusted if it is a forwarding reference and Ai
+      //   is an lvalue reference, in
       //   which case the type of Pi is changed to be the template parameter
       //   type (i.e., T&& is changed to simply T). [ Note: As a result, when
       //   Pi is T&& and Ai is X&, the adjusted Pi will be T, causing T to be
       //   deduced as X&. - end note ]
       TDF &= ~TDF_TopLevelParameterTypeList;
-
-      if (const RValueReferenceType *ParamRef
-                                        = Param->getAs<RValueReferenceType>()) {
-        if (isa<TemplateTypeParmType>(ParamRef->getPointeeType()) &&
-            !ParamRef->getPointeeType().getQualifiers())
-          if (Arg->isLValueReferenceType())
-            Param = ParamRef->getPointeeType();
-      }
+      if (isForwardingReference(Param, 0) && Arg->isLValueReferenceType())
+        Param = Param->getPointeeType();
     }
   }
 
@@ -2336,7 +2356,7 @@ static Sema::TemplateDeductionResult ConvertDeducedTemplateArguments(
   return Sema::TDK_Success;
 }
 
-DeclContext *getAsDeclContextOrEnclosing(Decl *D) {
+static DeclContext *getAsDeclContextOrEnclosing(Decl *D) {
   if (auto *DC = dyn_cast<DeclContext>(D))
     return DC;
   return D->getDeclContext();
@@ -2436,7 +2456,7 @@ FinishTemplateArgumentDeduction(
 /// Complete template argument deduction for a class or variable template,
 /// when partial ordering against a partial specialization.
 // FIXME: Factor out duplication with partial specialization version above.
-Sema::TemplateDeductionResult FinishTemplateArgumentDeduction(
+static Sema::TemplateDeductionResult FinishTemplateArgumentDeduction(
     Sema &S, TemplateDecl *Template, bool PartialOrdering,
     const TemplateArgumentList &TemplateArgs,
     SmallVectorImpl<DeducedTemplateArgument> &Deduced,
@@ -3185,12 +3205,9 @@ ResolveOverloadForDeduction(Sema &S, TemplateParameterList *TemplateParams,
 /// \returns true if the caller should not attempt to perform any template
 /// argument deduction based on this P/A pair because the argument is an
 /// overloaded function set that could not be resolved.
-static bool AdjustFunctionParmAndArgTypesForDeduction(Sema &S,
-                                          TemplateParameterList *TemplateParams,
-                                                      QualType &ParamType,
-                                                      QualType &ArgType,
-                                                      Expr *Arg,
-                                                      unsigned &TDF) {
+static bool AdjustFunctionParmAndArgTypesForDeduction(
+    Sema &S, TemplateParameterList *TemplateParams, unsigned FirstInnerIndex,
+    QualType &ParamType, QualType &ArgType, Expr *Arg, unsigned &TDF) {
   // C++0x [temp.deduct.call]p3:
   //   If P is a cv-qualified type, the top level cv-qualifiers of P's type
   //   are ignored for type deduction.
@@ -3221,13 +3238,10 @@ static bool AdjustFunctionParmAndArgTypesForDeduction(Sema &S,
       ArgType = Arg->getType();
     }
 
-    // C++0x [temp.deduct.call]p3:
-    //   If P is an rvalue reference to a cv-unqualified template
-    //   parameter and the argument is an lvalue, the type "lvalue
-    //   reference to A" is used in place of A for type deduction.
-    if (ParamRefType->isRValueReferenceType() &&
-        !ParamType.getQualifiers() &&
-        isa<TemplateTypeParmType>(ParamType) &&
+    // C++1z [temp.deduct.call]p3:
+    //   If P is a forwarding reference and the argument is an lvalue, the type
+    //   "lvalue reference to A" is used in place of A for type deduction.
+    if (isForwardingReference(QualType(ParamRefType, 0), FirstInnerIndex) &&
         Arg->isLValue())
       ArgType = S.Context.getLValueReferenceType(ArgType);
   } else {
@@ -3286,8 +3300,8 @@ hasDeducibleTemplateParameters(Sema &S, FunctionTemplateDecl *FunctionTemplate,
                                QualType T);
 
 static Sema::TemplateDeductionResult DeduceTemplateArgumentsFromCallArgument(
-    Sema &S, TemplateParameterList *TemplateParams, QualType ParamType,
-    Expr *Arg, TemplateDeductionInfo &Info,
+    Sema &S, TemplateParameterList *TemplateParams, unsigned FirstInnerIndex,
+    QualType ParamType, Expr *Arg, TemplateDeductionInfo &Info,
     SmallVectorImpl<DeducedTemplateArgument> &Deduced,
     SmallVectorImpl<Sema::OriginalCallArg> &OriginalCallArgs,
     bool DecomposedParam, unsigned ArgIdx, unsigned TDF);
@@ -3325,7 +3339,7 @@ static Sema::TemplateDeductionResult DeduceFromInitializerList(
   if (ElTy->isDependentType()) {
     for (Expr *E : ILE->inits()) {
       if (auto Result = DeduceTemplateArgumentsFromCallArgument(
-              S, TemplateParams, ElTy, E, Info, Deduced, OriginalCallArgs, true,
+              S, TemplateParams, 0, ElTy, E, Info, Deduced, OriginalCallArgs, true,
               ArgIdx, TDF))
         return Result;
     }
@@ -3354,8 +3368,8 @@ static Sema::TemplateDeductionResult DeduceFromInitializerList(
 /// \brief Perform template argument deduction per [temp.deduct.call] for a
 ///        single parameter / argument pair.
 static Sema::TemplateDeductionResult DeduceTemplateArgumentsFromCallArgument(
-    Sema &S, TemplateParameterList *TemplateParams, QualType ParamType,
-    Expr *Arg, TemplateDeductionInfo &Info,
+    Sema &S, TemplateParameterList *TemplateParams, unsigned FirstInnerIndex,
+    QualType ParamType, Expr *Arg, TemplateDeductionInfo &Info,
     SmallVectorImpl<DeducedTemplateArgument> &Deduced,
     SmallVectorImpl<Sema::OriginalCallArg> &OriginalCallArgs,
     bool DecomposedParam, unsigned ArgIdx, unsigned TDF) {
@@ -3364,8 +3378,8 @@ static Sema::TemplateDeductionResult DeduceTemplateArgumentsFromCallArgument(
 
   //   If P is a reference type [...]
   //   If P is a cv-qualified type [...]
-  if (AdjustFunctionParmAndArgTypesForDeduction(S, TemplateParams, ParamType,
-                                                ArgType, Arg, TDF))
+  if (AdjustFunctionParmAndArgTypesForDeduction(
+          S, TemplateParams, FirstInnerIndex, ParamType, ArgType, Arg, TDF))
     return Sema::TDK_Success;
 
   //   If [...] the argument is a non-empty initializer list [...]
@@ -3421,6 +3435,8 @@ Sema::TemplateDeductionResult Sema::DeduceTemplateArguments(
   FunctionDecl *Function = FunctionTemplate->getTemplatedDecl();
   unsigned NumParams = Function->getNumParams();
 
+  unsigned FirstInnerIndex = getFirstInnerIndex(FunctionTemplate);
+
   // C++ [temp.deduct.call]p1:
   //   Template argument deduction is done by comparing each function template
   //   parameter type (call it P) with the type of the corresponding argument
@@ -3475,7 +3491,7 @@ Sema::TemplateDeductionResult Sema::DeduceTemplateArguments(
 
     //   ... with the type of the corresponding argument
     return DeduceTemplateArgumentsFromCallArgument(
-        *this, TemplateParams, ParamType, Args[ArgIdx], Info, Deduced,
+        *this, TemplateParams, FirstInnerIndex, ParamType, Args[ArgIdx], Info, Deduced,
         OriginalCallArgs, /*Decomposed*/false, ArgIdx, /*TDF*/ 0);
   };
 
@@ -4019,17 +4035,26 @@ Sema::TemplateDeductionResult Sema::DeduceTemplateArguments(
 }
 
 namespace {
-  /// Substitute the 'auto' type specifier within a type for a given replacement
-  /// type.
-  class SubstituteAutoTransform :
-    public TreeTransform<SubstituteAutoTransform> {
+  /// Substitute the 'auto' specifier or deduced template specialization type
+  /// specifier within a type for a given replacement type.
+  class SubstituteDeducedTypeTransform :
+      public TreeTransform<SubstituteDeducedTypeTransform> {
     QualType Replacement;
-    bool UseAutoSugar;
+    bool UseTypeSugar;
   public:
-    SubstituteAutoTransform(Sema &SemaRef, QualType Replacement,
-                            bool UseAutoSugar = true)
-        : TreeTransform<SubstituteAutoTransform>(SemaRef),
-          Replacement(Replacement), UseAutoSugar(UseAutoSugar) {}
+    SubstituteDeducedTypeTransform(Sema &SemaRef, QualType Replacement,
+                            bool UseTypeSugar = true)
+        : TreeTransform<SubstituteDeducedTypeTransform>(SemaRef),
+          Replacement(Replacement), UseTypeSugar(UseTypeSugar) {}
+
+    QualType TransformDesugared(TypeLocBuilder &TLB, DeducedTypeLoc TL) {
+      assert(isa<TemplateTypeParmType>(Replacement) &&
+             "unexpected unsugared replacement kind");
+      QualType Result = Replacement;
+      TemplateTypeParmTypeLoc NewTL = TLB.push<TemplateTypeParmTypeLoc>(Result);
+      NewTL.setNameLoc(TL.getNameLoc());
+      return Result;
+    }
 
     QualType TransformAutoType(TypeLocBuilder &TLB, AutoTypeLoc TL) {
       // If we're building the type pattern to deduce against, don't wrap the
@@ -4039,21 +4064,29 @@ namespace {
       //   auto &&lref = lvalue;
       // must transform into "rvalue reference to T" not "rvalue reference to
       // auto type deduced as T" in order for [temp.deduct.call]p3 to apply.
-      if (!UseAutoSugar) {
-        assert(isa<TemplateTypeParmType>(Replacement) &&
-               "unexpected unsugared replacement kind");
-        QualType Result = Replacement;
-        TemplateTypeParmTypeLoc NewTL =
-          TLB.push<TemplateTypeParmTypeLoc>(Result);
-        NewTL.setNameLoc(TL.getNameLoc());
-        return Result;
-      } else {
-        QualType Result = SemaRef.Context.getAutoType(
-            Replacement, TL.getTypePtr()->getKeyword(), Replacement.isNull());
-        AutoTypeLoc NewTL = TLB.push<AutoTypeLoc>(Result);
-        NewTL.setNameLoc(TL.getNameLoc());
-        return Result;
-      }
+      //
+      // FIXME: Is this still necessary?
+      if (!UseTypeSugar)
+        return TransformDesugared(TLB, TL);
+
+      QualType Result = SemaRef.Context.getAutoType(
+          Replacement, TL.getTypePtr()->getKeyword(), Replacement.isNull());
+      auto NewTL = TLB.push<AutoTypeLoc>(Result);
+      NewTL.setNameLoc(TL.getNameLoc());
+      return Result;
+    }
+
+    QualType TransformDeducedTemplateSpecializationType(
+        TypeLocBuilder &TLB, DeducedTemplateSpecializationTypeLoc TL) {
+      if (!UseTypeSugar)
+        return TransformDesugared(TLB, TL);
+
+      QualType Result = SemaRef.Context.getDeducedTemplateSpecializationType(
+          TL.getTypePtr()->getTemplateName(),
+          Replacement, Replacement.isNull());
+      auto NewTL = TLB.push<DeducedTemplateSpecializationTypeLoc>(Result);
+      NewTL.setNameLoc(TL.getNameLoc());
+      return Result;
     }
 
     ExprResult TransformLambdaExpr(LambdaExpr *E) {
@@ -4104,7 +4137,7 @@ Sema::DeduceAutoType(TypeLoc Type, Expr *&Init, QualType &Result,
 
   if (!DependentDeductionDepth &&
       (Type.getType()->isDependentType() || Init->isTypeDependent())) {
-    Result = SubstituteAutoTransform(*this, QualType()).Apply(Type);
+    Result = SubstituteDeducedTypeTransform(*this, QualType()).Apply(Type);
     assert(!Result.isNull() && "substituting DependentTy can't fail");
     return DAR_Succeeded;
   }
@@ -4127,7 +4160,7 @@ Sema::DeduceAutoType(TypeLoc Type, Expr *&Init, QualType &Result,
         return DAR_FailedAlreadyDiagnosed;
       // FIXME: Support a non-canonical deduced type for 'auto'.
       Deduced = Context.getCanonicalType(Deduced);
-      Result = SubstituteAutoTransform(*this, Deduced).Apply(Type);
+      Result = SubstituteDeducedTypeTransform(*this, Deduced).Apply(Type);
       if (Result.isNull())
         return DAR_FailedAlreadyDiagnosed;
       return DAR_Succeeded;
@@ -4152,7 +4185,7 @@ Sema::DeduceAutoType(TypeLoc Type, Expr *&Init, QualType &Result,
       Loc, Loc, TemplParamPtr, Loc, nullptr);
 
   QualType FuncParam =
-      SubstituteAutoTransform(*this, TemplArg, /*UseAutoSugar*/false)
+      SubstituteDeducedTypeTransform(*this, TemplArg, /*UseTypeSugar*/false)
           .Apply(Type);
   assert(!FuncParam.isNull() &&
          "substituting template parameter for 'auto' failed");
@@ -4167,7 +4200,7 @@ Sema::DeduceAutoType(TypeLoc Type, Expr *&Init, QualType &Result,
   // might acquire a matching type in the instantiation.
   auto DeductionFailed = [&]() -> DeduceAutoResult {
     if (Init->isTypeDependent()) {
-      Result = SubstituteAutoTransform(*this, QualType()).Apply(Type);
+      Result = SubstituteDeducedTypeTransform(*this, QualType()).Apply(Type);
       assert(!Result.isNull() && "substituting DependentTy can't fail");
       return DAR_Succeeded;
     }
@@ -4186,7 +4219,7 @@ Sema::DeduceAutoType(TypeLoc Type, Expr *&Init, QualType &Result,
 
     for (unsigned i = 0, e = InitList->getNumInits(); i < e; ++i) {
       if (DeduceTemplateArgumentsFromCallArgument(
-              *this, TemplateParamsSt.get(), TemplArg, InitList->getInit(i),
+              *this, TemplateParamsSt.get(), 0, TemplArg, InitList->getInit(i),
               Info, Deduced, OriginalCallArgs, /*Decomposed*/ true,
               /*ArgIdx*/ 0, /*TDF*/ 0))
         return DeductionFailed();
@@ -4198,7 +4231,7 @@ Sema::DeduceAutoType(TypeLoc Type, Expr *&Init, QualType &Result,
     }
 
     if (DeduceTemplateArgumentsFromCallArgument(
-            *this, TemplateParamsSt.get(), FuncParam, Init, Info, Deduced,
+            *this, TemplateParamsSt.get(), 0, FuncParam, Init, Info, Deduced,
             OriginalCallArgs, /*Decomposed*/ false, /*ArgIdx*/ 0, /*TDF*/ 0))
       return DeductionFailed();
   }
@@ -4215,7 +4248,7 @@ Sema::DeduceAutoType(TypeLoc Type, Expr *&Init, QualType &Result,
       return DAR_FailedAlreadyDiagnosed;
   }
 
-  Result = SubstituteAutoTransform(*this, DeducedType).Apply(Type);
+  Result = SubstituteDeducedTypeTransform(*this, DeducedType).Apply(Type);
   if (Result.isNull())
     return DAR_FailedAlreadyDiagnosed;
 
@@ -4238,15 +4271,22 @@ QualType Sema::SubstAutoType(QualType TypeWithAuto,
                              QualType TypeToReplaceAuto) {
   if (TypeToReplaceAuto->isDependentType())
     TypeToReplaceAuto = QualType();
-  return SubstituteAutoTransform(*this, TypeToReplaceAuto)
+  return SubstituteDeducedTypeTransform(*this, TypeToReplaceAuto)
       .TransformType(TypeWithAuto);
 }
 
-TypeSourceInfo* Sema::SubstAutoTypeSourceInfo(TypeSourceInfo *TypeWithAuto,
-                             QualType TypeToReplaceAuto) {
+TypeSourceInfo *Sema::SubstAutoTypeSourceInfo(TypeSourceInfo *TypeWithAuto,
+                                              QualType TypeToReplaceAuto) {
   if (TypeToReplaceAuto->isDependentType())
     TypeToReplaceAuto = QualType();
-  return SubstituteAutoTransform(*this, TypeToReplaceAuto)
+  return SubstituteDeducedTypeTransform(*this, TypeToReplaceAuto)
+      .TransformType(TypeWithAuto);
+}
+
+QualType Sema::ReplaceAutoType(QualType TypeWithAuto,
+                               QualType TypeToReplaceAuto) {
+  return SubstituteDeducedTypeTransform(*this, TypeToReplaceAuto,
+                                        /*UseTypeSugar*/ false)
       .TransformType(TypeWithAuto);
 }
 

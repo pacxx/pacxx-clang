@@ -202,7 +202,8 @@ UnwrappedLineParser::UnwrappedLineParser(const FormatStyle &Style,
                                          ArrayRef<FormatToken *> Tokens,
                                          UnwrappedLineConsumer &Callback)
     : Line(new UnwrappedLine), MustBreakBeforeNextToken(false),
-      CurrentLines(&Lines), Style(Style), Keywords(Keywords), Tokens(nullptr),
+      CurrentLines(&Lines), Style(Style), Keywords(Keywords),
+      CommentPragmasRegex(Style.CommentPragmas), Tokens(nullptr),
       Callback(Callback), AllTokens(Tokens), PPBranchLevel(-1) {}
 
 void UnwrappedLineParser::reset() {
@@ -334,8 +335,11 @@ void UnwrappedLineParser::calculateBraceTypes(bool ExpectClassBody) {
     case tok::l_brace:
       if (Style.Language == FormatStyle::LK_JavaScript && PrevTok &&
           PrevTok->is(tok::colon))
-        // In TypeScript's TypeMemberLists, there can be semicolons between the
-        // individual members.
+        // A colon indicates this code is in a type, or a braced list following
+        // a label in an object literal ({a: {b: 1}}).
+        // The code below could be confused by semicolons between the individual
+        // members in a type member list, which would normally trigger BK_Block.
+        // In both cases, this must be parsed as an inline braced init.
         Tok->BlockKind = BK_BracedInit;
       else
         Tok->BlockKind = BK_Unknown;
@@ -1297,6 +1301,12 @@ bool UnwrappedLineParser::parseBracedList(bool ContinueOnSemicolons) {
           continue;
         }
       }
+      if (FormatTok->is(tok::l_brace)) {
+        // Could be a method inside of a braced list `{a() { return 1; }}`.
+        if (tryToParseBracedList())
+          continue;
+        parseChildBlock();
+      }
     }
     switch (FormatTok->Tok.getKind()) {
     case tok::caret:
@@ -1308,12 +1318,6 @@ bool UnwrappedLineParser::parseBracedList(bool ContinueOnSemicolons) {
     case tok::l_square:
       tryToParseLambda();
       break;
-    case tok::l_brace:
-      // Assume there are no blocks inside a braced init list apart
-      // from the ones we explicitly parse out (like lambdas).
-      FormatTok->BlockKind = BK_BracedInit;
-      parseBracedList();
-      break;
     case tok::l_paren:
       parseParens();
       // JavaScript can just have free standing methods and getters/setters in
@@ -1323,6 +1327,12 @@ bool UnwrappedLineParser::parseBracedList(bool ContinueOnSemicolons) {
           parseChildBlock();
         break;
       }
+      break;
+    case tok::l_brace:
+      // Assume there are no blocks inside a braced init list apart
+      // from the ones we explicitly parse out (like lambdas).
+      FormatTok->BlockKind = BK_BracedInit;
+      parseBracedList();
       break;
     case tok::r_brace:
       nextToken();
@@ -1379,6 +1389,12 @@ void UnwrappedLineParser::parseParens() {
       nextToken();
       if (FormatTok->Tok.is(tok::l_brace))
         parseBracedList();
+      break;
+    case tok::kw_class:
+      if (Style.Language == FormatStyle::LK_JavaScript)
+        parseRecord(/*ParseAsExpr=*/true);
+      else
+        nextToken();
       break;
     case tok::identifier:
       if (Style.Language == FormatStyle::LK_JavaScript &&
@@ -1818,7 +1834,7 @@ void UnwrappedLineParser::parseJavaEnumBody() {
   addUnwrappedLine();
 }
 
-void UnwrappedLineParser::parseRecord() {
+void UnwrappedLineParser::parseRecord(bool ParseAsExpr) {
   const FormatToken &InitialToken = *FormatTok;
   nextToken();
 
@@ -1862,11 +1878,15 @@ void UnwrappedLineParser::parseRecord() {
     }
   }
   if (FormatTok->Tok.is(tok::l_brace)) {
-    if (ShouldBreakBeforeBrace(Style, InitialToken))
-      addUnwrappedLine();
+    if (ParseAsExpr) {
+      parseChildBlock();
+    } else {
+      if (ShouldBreakBeforeBrace(Style, InitialToken))
+        addUnwrappedLine();
 
-    parseBlock(/*MustBeDeclaration=*/true, /*AddLevel=*/true,
-               /*MunchSemi=*/false);
+      parseBlock(/*MustBeDeclaration=*/true, /*AddLevel=*/true,
+                 /*MunchSemi=*/false);
+    }
   }
   // There is no addUnwrappedLine() here so that we fall through to parsing a
   // structural element afterwards. Thus, in "class A {} n, m;",
@@ -2048,8 +2068,16 @@ static bool isLineComment(const FormatToken &FormatTok) {
 // Checks if \p FormatTok is a line comment that continues the line comment
 // section on \p Line.
 static bool continuesLineComment(const FormatToken &FormatTok,
-                                 const UnwrappedLine &Line) {
+                                 const UnwrappedLine &Line,
+                                 llvm::Regex &CommentPragmasRegex) {
   if (Line.Tokens.empty())
+    return false;
+
+  StringRef IndentContent = FormatTok.TokenText;
+  if (FormatTok.TokenText.startswith("//") ||
+      FormatTok.TokenText.startswith("/*"))
+    IndentContent = FormatTok.TokenText.substr(2);
+  if (CommentPragmasRegex.match(IndentContent))
     return false;
 
   // If Line starts with a line comment, then FormatTok continues the comment
@@ -2066,31 +2094,58 @@ static bool continuesLineComment(const FormatToken &FormatTok,
   // original start column of the min column token of the line.
   //
   // For example, the second line comment continues the first in these cases:
+  //
   // // first line
   // // second line
+  //
   // and:
+  //
   // // first line
   //  // second line
+  //
   // and:
+  //
   // int i; // first line
   //  // second line
+  //
   // and:
+  //
   // do { // first line
   //      // second line
   //   int i;
   // } while (true);
   //
+  // and:
+  //
+  // enum {
+  //   a, // first line
+  //    // second line
+  //   b
+  // };
+  //
   // The second line comment doesn't continue the first in these cases:
+  //
   //   // first line
   //  // second line
+  //
   // and:
+  //
   // int i; // first line
   // // second line
+  //
   // and:
+  //
   // do { // first line
   //   // second line
   //   int i;
   // } while (true);
+  //
+  // and:
+  //
+  // enum {
+  //   a, // first line
+  //   // second line
+  // };
   const FormatToken *MinColumnToken = Line.Tokens.front().Tok;
 
   // Scan for '{//'. If found, use the column of '{' as a min column for line
@@ -2103,6 +2158,11 @@ static bool continuesLineComment(const FormatToken &FormatTok,
       break;
     }
     PreviousToken = Node.Tok;
+
+    // Grab the last newline preceding a token in this unwrapped line.
+    if (Node.Tok->NewlinesBefore > 0) {
+      MinColumnToken = Node.Tok;
+    }
   }
   if (PreviousToken && PreviousToken->is(tok::l_brace)) {
     MinColumnToken = PreviousToken;
@@ -2130,7 +2190,9 @@ void UnwrappedLineParser::flushComments(bool NewlineBeforeNext) {
     //
     // FIXME: Consider putting separate line comment sections as children to the
     // unwrapped line instead.
-    if (isOnNewLine(**I) && JustComments && !continuesLineComment(**I, *Line))
+    (*I)->ContinuesLineCommentSection =
+        continuesLineComment(**I, *Line, CommentPragmasRegex);
+    if (isOnNewLine(**I) && JustComments && !(*I)->ContinuesLineCommentSection)
       addUnwrappedLine();
     pushToken(*I);
   }
@@ -2158,13 +2220,71 @@ const FormatToken *UnwrappedLineParser::getPreviousToken() {
   return Line->Tokens.back().Tok;
 }
 
+void UnwrappedLineParser::distributeComments(
+    const SmallVectorImpl<FormatToken *> &Comments,
+    const FormatToken *NextTok) {
+  // Whether or not a line comment token continues a line is controlled by
+  // the method continuesLineComment, with the following caveat:
+  //
+  // Define a trail of Comments to be a nonempty proper postfix of Comments such
+  // that each comment line from the trail is aligned with the next token, if
+  // the next token exists. If a trail exists, the beginning of the maximal
+  // trail is marked as a start of a new comment section.
+  //
+  // For example in this code:
+  //
+  // int a; // line about a
+  //   // line 1 about b
+  //   // line 2 about b
+  //   int b;
+  //
+  // the two lines about b form a maximal trail, so there are two sections, the
+  // first one consisting of the single comment "// line about a" and the
+  // second one consisting of the next two comments.
+  if (Comments.empty())
+    return;
+  bool ShouldPushCommentsInCurrentLine = true;
+  bool HasTrailAlignedWithNextToken = false;
+  unsigned StartOfTrailAlignedWithNextToken = 0;
+  if (NextTok) {
+    // We are skipping the first element intentionally.
+    for (unsigned i = Comments.size() - 1; i > 0; --i) {
+      if (Comments[i]->OriginalColumn == NextTok->OriginalColumn) {
+        HasTrailAlignedWithNextToken = true;
+        StartOfTrailAlignedWithNextToken = i;
+      }
+    }
+  }
+  for (unsigned i = 0, e = Comments.size(); i < e; ++i) {
+    FormatToken *FormatTok = Comments[i];
+    if (HasTrailAlignedWithNextToken &&
+        i == StartOfTrailAlignedWithNextToken) {
+      FormatTok->ContinuesLineCommentSection = false;
+    } else {
+      FormatTok->ContinuesLineCommentSection =
+          continuesLineComment(*FormatTok, *Line, CommentPragmasRegex);
+    }
+    if (!FormatTok->ContinuesLineCommentSection &&
+        (isOnNewLine(*FormatTok) || FormatTok->IsFirst)) {
+      ShouldPushCommentsInCurrentLine = false;
+    }
+    if (ShouldPushCommentsInCurrentLine) {
+      pushToken(FormatTok);
+    } else {
+      CommentsBeforeNextToken.push_back(FormatTok);
+    }
+  }
+}
+
 void UnwrappedLineParser::readToken() {
-  bool CommentsInCurrentLine = true;
+  SmallVector<FormatToken *, 1> Comments;
   do {
     FormatTok = Tokens->getNextToken();
     assert(FormatTok);
     while (!Line->InPPDirective && FormatTok->Tok.is(tok::hash) &&
            (FormatTok->HasUnescapedNewline || FormatTok->IsFirst)) {
+      distributeComments(Comments, FormatTok);
+      Comments.clear();
       // If there is an unfinished unwrapped line, we flush the preprocessor
       // directives only after that unwrapped line was finished later.
       bool SwitchToPreprocessorLines = !Line->Tokens.empty();
@@ -2194,18 +2314,17 @@ void UnwrappedLineParser::readToken() {
       continue;
     }
 
-    if (!FormatTok->Tok.is(tok::comment))
+    if (!FormatTok->Tok.is(tok::comment)) {
+      distributeComments(Comments, FormatTok);
+      Comments.clear();
       return;
-    if (!continuesLineComment(*FormatTok, *Line) &&
-        (isOnNewLine(*FormatTok) || FormatTok->IsFirst)) {
-      CommentsInCurrentLine = false;
     }
-    if (CommentsInCurrentLine) {
-      pushToken(FormatTok);
-    } else {
-      CommentsBeforeNextToken.push_back(FormatTok);
-    }
+
+    Comments.push_back(FormatTok);
   } while (!eof());
+
+  distributeComments(Comments, nullptr);
+  Comments.clear();
 }
 
 void UnwrappedLineParser::pushToken(FormatToken *Tok) {

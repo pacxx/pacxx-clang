@@ -301,22 +301,24 @@ const FormatToken &BreakableComment::tokenAt(unsigned LineIndex) const {
 
 static bool mayReflowContent(StringRef Content) {
   Content = Content.trim(Blanks);
+  // Lines starting with '@' commonly have special meaning.
+  static const SmallVector<StringRef, 4> kSpecialMeaningPrefixes = {
+      "@", "TODO", "FIXME", "XXX"};
+  bool hasSpecialMeaningPrefix = false;
+  for (StringRef Prefix : kSpecialMeaningPrefixes) {
+    if (Content.startswith(Prefix)) {
+      hasSpecialMeaningPrefix = true;
+      break;
+    }
+  }
   // Simple heuristic for what to reflow: content should contain at least two
   // characters and either the first or second character must be
   // non-punctuation.
-  return Content.size() >= 2 &&
-         // Lines starting with '@' commonly have special meaning.
-         !Content.startswith("@") && !Content.endswith("\\") &&
+  return Content.size() >= 2 && !hasSpecialMeaningPrefix &&
+         !Content.endswith("\\") &&
          // Note that this is UTF-8 safe, since if isPunctuation(Content[0]) is
          // true, then the first code point must be 1 byte long.
          (!isPunctuation(Content[0]) || !isPunctuation(Content[1]));
-}
-
-bool BreakableComment::mayReflow(unsigned LineIndex) const {
-  return LineIndex > 0 && mayReflowContent(Content[LineIndex]) &&
-         !Tok.Finalized && !switchesFormatting(tokenAt(LineIndex)) &&
-         (!Tok.is(TT_LineComment) ||
-          OriginalPrefix[LineIndex] == OriginalPrefix[LineIndex - 1]);
 }
 
 BreakableBlockComment::BreakableBlockComment(
@@ -341,6 +343,20 @@ BreakableBlockComment::BreakableBlockComment(
   Tokens.resize(Lines.size());
   for (size_t i = 1; i < Lines.size(); ++i)
     adjustWhitespace(i, IndentDelta);
+
+  // Align decorations with the column of the star on the first line,
+  // that is one column after the start "/*".
+  DecorationColumn = StartColumn + 1;
+
+  // Account for comment decoration patterns like this:
+  //
+  // /*
+  // ** blah blah blah
+  // */
+  if (Lines.size() >= 2 && Content[1].startswith("**") &&
+      static_cast<unsigned>(ContentColumn[1]) == StartColumn) {
+    DecorationColumn = StartColumn;
+  }
 
   Decoration = "* ";
   if (Lines.size() == 1 && !FirstInLine) {
@@ -371,6 +387,10 @@ BreakableBlockComment::BreakableBlockComment(
         // trailing */. We also need to preserve whitespace, so that */ is
         // correctly indented.
         LastLineNeedsDecoration = false;
+        // Align the star in the last '*/' with the stars on the previous lines.
+        if (e >= 2 && !Decoration.empty()) {
+          ContentColumn[i] = DecorationColumn;
+        }
       } else if (Decoration.empty()) {
         // For all other lines, set the start column to 0 if they're empty, so
         // we do not insert trailing whitespace anywhere.
@@ -380,12 +400,15 @@ BreakableBlockComment::BreakableBlockComment(
     }
 
     // The first line already excludes the star.
+    // The last line excludes the star if LastLineNeedsDecoration is false.
     // For all other lines, adjust the line to exclude the star and
     // (optionally) the first whitespace.
     unsigned DecorationSize = Decoration.startswith(Content[i])
                                   ? Content[i].size()
                                   : Decoration.size();
-    ContentColumn[i] += DecorationSize;
+    if (DecorationSize) {
+      ContentColumn[i] = DecorationColumn + DecorationSize;
+    }
     Content[i] = Content[i].substr(DecorationSize);
     if (!Decoration.startswith(Content[i]))
       IndentAtLineBreak =
@@ -398,7 +421,8 @@ BreakableBlockComment::BreakableBlockComment(
     llvm::dbgs() << "IndentAtLineBreak " << IndentAtLineBreak << "\n";
     for (size_t i = 0; i < Lines.size(); ++i) {
       llvm::dbgs() << i << " |" << Content[i] << "| "
-                   << (Content[i].data() - Lines[i].data()) << "\n";
+                   << "CC=" << ContentColumn[i] << "| "
+                   << "IN=" << (Content[i].data() - Lines[i].data()) << "\n";
     }
   });
 }
@@ -492,8 +516,9 @@ void BreakableBlockComment::insertBreak(unsigned LineIndex, unsigned TailOffset,
 BreakableToken::Split BreakableBlockComment::getSplitBefore(
     unsigned LineIndex,
     unsigned PreviousEndColumn,
-    unsigned ColumnLimit) const {
-  if (!mayReflow(LineIndex))
+    unsigned ColumnLimit,
+    llvm::Regex &CommentPragmasRegex) const {
+  if (!mayReflow(LineIndex, CommentPragmasRegex))
     return Split(StringRef::npos, 0);
   StringRef TrimmedContent = Content[LineIndex].ltrim(Blanks);
   return getReflowSplit(TrimmedContent, ReflowPrefix, PreviousEndColumn,
@@ -613,6 +638,19 @@ void BreakableBlockComment::replaceWhitespaceBefore(
       InPPDirective, /*Newlines=*/1, ContentColumn[LineIndex] - Prefix.size());
 }
 
+bool BreakableBlockComment::mayReflow(unsigned LineIndex,
+                                      llvm::Regex &CommentPragmasRegex) const {
+  // Content[LineIndex] may exclude the indent after the '*' decoration. In that
+  // case, we compute the start of the comment pragma manually.
+  StringRef IndentContent = Content[LineIndex];
+  if (Lines[LineIndex].ltrim(Blanks).startswith("*")) {
+    IndentContent = Lines[LineIndex].ltrim(Blanks).substr(1);
+  }
+  return LineIndex > 0 && !CommentPragmasRegex.match(IndentContent) &&
+         mayReflowContent(Content[LineIndex]) && !Tok.Finalized &&
+         !switchesFormatting(tokenAt(LineIndex));
+}
+
 unsigned
 BreakableBlockComment::getContentStartColumn(unsigned LineIndex,
                                              unsigned TailOffset) const {
@@ -686,7 +724,7 @@ BreakableLineCommentSection::BreakableLineCommentSection(
       Content[i] = Content[i].substr(0, EndOfLine);
     }
     LineTok = CurrentTok->Next;
-    if (CurrentTok->Next && CurrentTok->Next->NewlinesBefore > 1) {
+    if (CurrentTok->Next && !CurrentTok->Next->ContinuesLineCommentSection) {
       // A line comment section needs to broken by a line comment that is
       // preceded by at least two newlines. Note that we put this break here
       // instead of breaking at a previous stage during parsing, since that
@@ -739,10 +777,10 @@ void BreakableLineCommentSection::insertBreak(unsigned LineIndex,
 }
 
 BreakableComment::Split BreakableLineCommentSection::getSplitBefore(
-    unsigned LineIndex,
-    unsigned PreviousEndColumn,
-    unsigned ColumnLimit) const {
-  if (!mayReflow(LineIndex)) return Split(StringRef::npos, 0);
+    unsigned LineIndex, unsigned PreviousEndColumn, unsigned ColumnLimit,
+    llvm::Regex &CommentPragmasRegex) const {
+  if (!mayReflow(LineIndex, CommentPragmasRegex))
+    return Split(StringRef::npos, 0);
   return getReflowSplit(Content[LineIndex], ReflowPrefix, PreviousEndColumn,
                         ColumnLimit);
 }
@@ -839,6 +877,20 @@ void BreakableLineCommentSection::updateNextToken(LineState& State) const {
   if (LastLineTok) {
     State.NextToken = LastLineTok->Next;
   }
+}
+
+bool BreakableLineCommentSection::mayReflow(
+    unsigned LineIndex, llvm::Regex &CommentPragmasRegex) const {
+  // Line comments have the indent as part of the prefix, so we need to
+  // recompute the start of the line.
+  StringRef IndentContent = Content[LineIndex];
+  if (Lines[LineIndex].startswith("//")) {
+    IndentContent = Lines[LineIndex].substr(2);
+  }
+  return LineIndex > 0 && !CommentPragmasRegex.match(IndentContent) &&
+         mayReflowContent(Content[LineIndex]) && !Tok.Finalized &&
+         !switchesFormatting(tokenAt(LineIndex)) &&
+         OriginalPrefix[LineIndex] == OriginalPrefix[LineIndex - 1];
 }
 
 unsigned

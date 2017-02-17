@@ -1167,7 +1167,6 @@ void ASTContext::InitBuiltinTypes(const TargetInfo &Target,
     InitBuiltinType(OCLEventTy, BuiltinType::OCLEvent);
     InitBuiltinType(OCLClkEventTy, BuiltinType::OCLClkEvent);
     InitBuiltinType(OCLQueueTy, BuiltinType::OCLQueue);
-    InitBuiltinType(OCLNDRangeTy, BuiltinType::OCLNDRange);
     InitBuiltinType(OCLReserveIDTy, BuiltinType::OCLReserveID);
   }
   
@@ -1775,7 +1774,6 @@ TypeInfo ASTContext::getTypeInfoImpl(const Type *T) const {
     case BuiltinType::OCLEvent:
     case BuiltinType::OCLClkEvent:
     case BuiltinType::OCLQueue:
-    case BuiltinType::OCLNDRange:
     case BuiltinType::OCLReserveID:
       // Currently these types are pointers to opaque types.
       Width = Target->getPointerWidth(0);
@@ -3872,42 +3870,45 @@ ASTContext::getDependentTemplateSpecializationType(
   return QualType(T, 0);
 }
 
+TemplateArgument ASTContext::getInjectedTemplateArg(NamedDecl *Param) {
+  TemplateArgument Arg;
+  if (auto *TTP = dyn_cast<TemplateTypeParmDecl>(Param)) {
+    QualType ArgType = getTypeDeclType(TTP);
+    if (TTP->isParameterPack())
+      ArgType = getPackExpansionType(ArgType, None);
+
+    Arg = TemplateArgument(ArgType);
+  } else if (auto *NTTP = dyn_cast<NonTypeTemplateParmDecl>(Param)) {
+    Expr *E = new (*this) DeclRefExpr(
+        NTTP, /*enclosing*/false,
+        NTTP->getType().getNonLValueExprType(*this),
+        Expr::getValueKindForType(NTTP->getType()), NTTP->getLocation());
+
+    if (NTTP->isParameterPack())
+      E = new (*this) PackExpansionExpr(DependentTy, E, NTTP->getLocation(),
+                                        None);
+    Arg = TemplateArgument(E);
+  } else {
+    auto *TTP = cast<TemplateTemplateParmDecl>(Param);
+    if (TTP->isParameterPack())
+      Arg = TemplateArgument(TemplateName(TTP), Optional<unsigned>());
+    else
+      Arg = TemplateArgument(TemplateName(TTP));
+  }
+
+  if (Param->isTemplateParameterPack())
+    Arg = TemplateArgument::CreatePackCopy(*this, Arg);
+
+  return Arg;
+}
+
 void
 ASTContext::getInjectedTemplateArgs(const TemplateParameterList *Params,
                                     SmallVectorImpl<TemplateArgument> &Args) {
   Args.reserve(Args.size() + Params->size());
 
-  for (NamedDecl *Param : *Params) {
-    TemplateArgument Arg;
-    if (auto *TTP = dyn_cast<TemplateTypeParmDecl>(Param)) {
-      QualType ArgType = getTypeDeclType(TTP);
-      if (TTP->isParameterPack())
-        ArgType = getPackExpansionType(ArgType, None);
-
-      Arg = TemplateArgument(ArgType);
-    } else if (auto *NTTP = dyn_cast<NonTypeTemplateParmDecl>(Param)) {
-      Expr *E = new (*this) DeclRefExpr(
-          NTTP, /*enclosing*/false,
-          NTTP->getType().getNonLValueExprType(*this),
-          Expr::getValueKindForType(NTTP->getType()), NTTP->getLocation());
-
-      if (NTTP->isParameterPack())
-        E = new (*this) PackExpansionExpr(DependentTy, E, NTTP->getLocation(),
-                                          None);
-      Arg = TemplateArgument(E);
-    } else {
-      auto *TTP = cast<TemplateTemplateParmDecl>(Param);
-      if (TTP->isParameterPack())
-        Arg = TemplateArgument(TemplateName(TTP), Optional<unsigned>());
-      else
-        Arg = TemplateArgument(TemplateName(TTP));
-    }
-
-    if (Param->isTemplateParameterPack())
-      Arg = TemplateArgument::CreatePackCopy(*this, Arg);
-
-    Args.push_back(Arg);
-  }
+  for (NamedDecl *Param : *Params)
+    Args.push_back(getInjectedTemplateArg(Param));
 }
 
 QualType ASTContext::getPackExpansionType(QualType Pattern,
@@ -5942,7 +5943,6 @@ static char getObjCEncodingForPrimitiveKind(const ASTContext *C,
     case BuiltinType::OCLEvent:
     case BuiltinType::OCLClkEvent:
     case BuiltinType::OCLQueue:
-    case BuiltinType::OCLNDRange:
     case BuiltinType::OCLReserveID:
     case BuiltinType::OCLSampler:
     case BuiltinType::Dependent:

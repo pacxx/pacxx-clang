@@ -1624,7 +1624,14 @@ def err_covariant_return_type_class_type_more_qualified : Error<
   "return type of virtual function %0 is not covariant with the return type of "
   "the function it overrides (class type %1 is more qualified than class "
   "type %2">;
-  
+
+// C++ implicit special member functions
+def note_in_declaration_of_implicit_special_member : Note<
+  "while declaring the implicit "
+  "%select{default constructor|copy constructor|move constructor|"
+  "copy assignment operator|move assignment operator|destructor}1"
+  " for %0">;
+
 // C++ constructors
 def err_constructor_cannot_be : Error<"constructor cannot be declared '%0'">;
 def err_invalid_qualified_constructor : Error<
@@ -1807,8 +1814,9 @@ def note_uninit_fixit_remove_cond : Note<
   "remove the %select{'%1' if its condition|condition if it}0 "
   "is always %select{false|true}2">;
 def err_init_incomplete_type : Error<"initialization of incomplete type %0">;
-def err_list_init_in_parens : Error<"list-initializer for non-class type %0 "
-  "must not be parenthesized">;
+def err_list_init_in_parens : Error<
+  "cannot initialize %select{non-class|reference}0 type %1 with a "
+  "parenthesized initializer list">;
 
 def warn_unsequenced_mod_mod : Warning<
   "multiple unsequenced modifications to %0">, InGroup<Unsequenced>;
@@ -2032,6 +2040,9 @@ def override_keyword_hides_virtual_member_function : Error<
   "%select{function|functions}1">;
 def err_function_marked_override_not_overriding : Error<
   "%0 marked 'override' but does not override any member functions">;
+def warn_destructor_marked_not_override_overriding : Warning <
+  "%0 overrides a destructor but is not marked 'override'">,
+  InGroup<CXX11WarnOverrideDestructor>, DefaultIgnore;
 def warn_function_marked_not_override_overriding : Warning <
   "%0 overrides a member function but is not marked 'override'">,
   InGroup<CXX11WarnOverrideMethod>;
@@ -2744,7 +2755,8 @@ def warn_attribute_wrong_decl_type : Warning<
   "|functions, methods, enums, and classes"
   "|structs, classes, variables, functions, and inline namespaces"
   "|variables, functions, methods, types, enumerations, enumerators, labels, and non-static data members"
-  "|classes and enumerations}1">,
+  "|classes and enumerations"
+  "|named declarations}1">,
   InGroup<IgnoredAttributes>;
 def err_attribute_wrong_decl_type : Error<warn_attribute_wrong_decl_type.Text>;
 def warn_type_attribute_wrong_type : Warning<
@@ -4897,6 +4909,21 @@ def warn_bitfield_width_exceeds_type_width: Warning<
 def warn_anon_bitfield_width_exceeds_type_width : Warning<
   "width of anonymous bit-field (%0 bits) exceeds width of its type; value "
   "will be truncated to %1 bit%s1">, InGroup<BitFieldWidth>;
+def warn_bitfield_too_small_for_enum : Warning<
+  "bit-field %0 is not wide enough to store all enumerators of %1">,
+  InGroup<BitFieldEnumConversion>, DefaultIgnore;
+def note_widen_bitfield : Note<
+  "widen this field to %0 bits to store all values of %1">;
+def warn_unsigned_bitfield_assigned_signed_enum : Warning<
+  "assigning value of signed enum type %1 to unsigned bit-field %0; "
+  "negative enumerators of enum %1 will be converted to positive values">,
+  InGroup<BitFieldEnumConversion>, DefaultIgnore;
+def warn_signed_bitfield_enum_conversion : Warning<
+  "signed bit-field %0 needs an extra bit to represent the largest positive "
+  "enumerators of %1">,
+  InGroup<BitFieldEnumConversion>, DefaultIgnore;
+def note_change_bitfield_sign : Note<
+  "consider making the bitfield type %select{unsigned|signed}0">;
 
 def warn_missing_braces : Warning<
   "suggest braces around initialization of subobject">,
@@ -5839,8 +5866,8 @@ def err_builtin_func_cast_more_than_one_arg : Error<
   "function-style cast to a builtin type can only take one argument">;
 def err_value_init_for_array_type : Error<
   "array types cannot be value-initialized">;
-def err_value_init_for_function_type : Error<
-  "function types cannot be value-initialized">;
+def err_init_for_function_type : Error<
+  "cannot create object of function type %0">;
 def warn_format_nonliteral_noargs : Warning<
   "format string is not a string literal (potentially insecure)">,
   InGroup<FormatSecurity>;
@@ -6005,6 +6032,12 @@ def warn_objc_circular_container : Warning<
   "adding '%0' to '%1' might cause circular dependency in container">,
   InGroup<DiagGroup<"objc-circular-container">>;
 def note_objc_circular_container_declared_here : Note<"'%0' declared here">;
+def warn_objc_unsafe_perform_selector : Warning<
+  "%0 is incompatible with selectors that return a "
+  "%select{struct|union|vector}1 type">,
+  InGroup<DiagGroup<"objc-unsafe-perform-selector">>;
+def note_objc_unsafe_perform_selector_method_declared_here :  Note<
+  "method %0 that returns %1 declared here">;
 
 def warn_setter_getter_impl_required : Warning<
   "property %0 requires method %1 to be defined - "
@@ -7988,6 +8021,8 @@ def err_x86_builtin_32_bit_tgt : Error<
   "this builtin is only available on x86-64 targets">;
 def err_x86_builtin_invalid_rounding : Error<
   "invalid rounding argument">;
+def err_x86_builtin_invalid_scale : Error<
+  "scale argument must be 1, 2, 4, or 8">;
 
 def err_builtin_longjmp_unsupported : Error<
   "__builtin_longjmp is not supported for the current target">;
@@ -8202,6 +8237,8 @@ def err_opencl_ptrptr_kernel_param : Error<
 def err_kernel_arg_address_space : Error<
   "pointer arguments to kernel functions must reside in '__global', "
   "'__constant' or '__local' address space">;
+def err_opencl_ext_vector_component_invalid_length : Error<
+  "vector component access has invalid length %0.  Supported: 1,2,3,4,8,16.">;
 def err_opencl_function_variable : Error<
   "%select{non-kernel function|function scope}0 variable cannot be declared in %1 address space">;
 def err_static_function_scope : Error<
@@ -8799,8 +8836,7 @@ let CategoryName = "Coroutines Issue" in {
 def err_return_in_coroutine : Error<
   "return statement not allowed in coroutine; did you mean 'co_return'?">;
 def note_declared_coroutine_here : Note<
-  "function is a coroutine due to use of "
-  "'%select{co_await|co_yield|co_return}0' here">;
+  "function is a coroutine due to use of '%0' here">;
 def err_coroutine_objc_method : Error<
   "Objective-C methods as coroutines are not yet supported">;
 def err_coroutine_unevaluated_context : Error<
@@ -8812,24 +8848,38 @@ def err_coroutine_invalid_func_context : Error<
   "|a copy assignment operator|a move assignment operator|the 'main' function"
   "|a constexpr function|a function with a deduced return type"
   "|a varargs function}0">;
-def err_implied_std_coroutine_traits_not_found : Error<
-  "you need to include <experimental/coroutine> before defining a coroutine">;
+def err_implied_coroutine_type_not_found : Error<
+  "%0 type was not found; include <experimental/coroutine> before defining "
+  "a coroutine">;
+def err_malformed_std_coroutine_handle : Error<
+  "std::experimental::coroutine_handle must be a class template">;
+def err_coroutine_handle_missing_member : Error<
+  "std::experimental::coroutine_handle missing a member named '%0'">;
 def err_malformed_std_coroutine_traits : Error<
   "'std::experimental::coroutine_traits' must be a class template">;
 def err_implied_std_coroutine_traits_promise_type_not_found : Error<
   "this function cannot be a coroutine: %q0 has no member named 'promise_type'">;
 def err_implied_std_coroutine_traits_promise_type_not_class : Error<
   "this function cannot be a coroutine: %0 is not a class">;
-def err_coroutine_traits_missing_specialization : Error<
+def err_coroutine_promise_type_incomplete : Error<
+  "this function cannot be a coroutine: %0 is an incomplete type">;
+def err_coroutine_type_missing_specialization : Error<
   "this function cannot be a coroutine: missing definition of "
   "specialization %q0">;
-def err_implied_std_current_exception_not_found : Error<
-  "you need to include <exception> before defining a coroutine that implicitly "
-  "uses 'set_exception'">;
-def err_malformed_std_current_exception : Error<
-  "'std::current_exception' must be a function">;
 def err_coroutine_promise_return_ill_formed : Error<
   "%0 declares both 'return_value' and 'return_void'">;
+def note_coroutine_promise_implicit_await_transform_required_here : Note<
+  "call to 'await_transform' implicitly required by 'co_await' here">;
+def note_coroutine_promise_call_implicitly_required : Note<
+  "call to '%select{initial_suspend|final_suspend}0' implicitly "
+  "required by the %select{initial suspend point|final suspend point}0">;
+def err_coroutine_promise_unhandled_exception_required : Error<
+  "%0 is required to declare the member 'unhandled_exception()'">;
+def warn_coroutine_promise_unhandled_exception_required_with_exceptions : Warning<
+  "%0 is required to declare the member 'unhandled_exception()' when exceptions are enabled">,
+  InGroup<Coroutine>;
+def err_coroutine_promise_get_return_object_on_allocation_failure : Error<
+  "%0: 'get_return_object_on_allocation_failure()' must be a static member function">;
 }
 
 let CategoryName = "Documentation Issue" in {

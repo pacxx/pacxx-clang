@@ -534,7 +534,8 @@ bool CodeGenFunction::sanitizePerformTypeCheck() const {
 
 void CodeGenFunction::EmitTypeCheck(TypeCheckKind TCK, SourceLocation Loc,
                                     llvm::Value *Ptr, QualType Ty,
-                                    CharUnits Alignment, bool SkipNullCheck) {
+                                    CharUnits Alignment,
+                                    SanitizerSet SkippedChecks) {
   if (!sanitizePerformTypeCheck())
     return;
 
@@ -552,7 +553,7 @@ void CodeGenFunction::EmitTypeCheck(TypeCheckKind TCK, SourceLocation Loc,
   bool AllowNullPointers = TCK == TCK_DowncastPointer || TCK == TCK_Upcast ||
                            TCK == TCK_UpcastToVirtualBase;
   if ((SanOpts.has(SanitizerKind::Null) || AllowNullPointers) &&
-      !SkipNullCheck) {
+      !SkippedChecks.has(SanitizerKind::Null)) {
     // The glvalue must not be an empty glvalue.
     llvm::Value *IsNonNull = Builder.CreateIsNotNull(Ptr);
 
@@ -568,7 +569,9 @@ void CodeGenFunction::EmitTypeCheck(TypeCheckKind TCK, SourceLocation Loc,
     }
   }
 
-  if (SanOpts.has(SanitizerKind::ObjectSize) && !Ty->isIncompleteType()) {
+  if (SanOpts.has(SanitizerKind::ObjectSize) &&
+      !SkippedChecks.has(SanitizerKind::ObjectSize) &&
+      !Ty->isIncompleteType()) {
     uint64_t Size = getContext().getTypeSizeInChars(Ty).getQuantity();
 
     // The glvalue must refer to a large enough storage region.
@@ -578,16 +581,18 @@ void CodeGenFunction::EmitTypeCheck(TypeCheckKind TCK, SourceLocation Loc,
     llvm::Type *Tys[2] = { IntPtrTy, Int8PtrTy };
     llvm::Value *F = CGM.getIntrinsic(llvm::Intrinsic::objectsize, Tys);
     llvm::Value *Min = Builder.getFalse();
+    llvm::Value *NullIsUnknown = Builder.getFalse();
     llvm::Value *CastAddr = Builder.CreateBitCast(Ptr, Int8PtrTy);
-    llvm::Value *LargeEnough =
-        Builder.CreateICmpUGE(Builder.CreateCall(F, {CastAddr, Min}),
-                              llvm::ConstantInt::get(IntPtrTy, Size));
+    llvm::Value *LargeEnough = Builder.CreateICmpUGE(
+        Builder.CreateCall(F, {CastAddr, Min, NullIsUnknown}),
+        llvm::ConstantInt::get(IntPtrTy, Size));
     Checks.push_back(std::make_pair(LargeEnough, SanitizerKind::ObjectSize));
   }
 
   uint64_t AlignVal = 0;
 
-  if (SanOpts.has(SanitizerKind::Alignment)) {
+  if (SanOpts.has(SanitizerKind::Alignment) &&
+      !SkippedChecks.has(SanitizerKind::Alignment)) {
     AlignVal = Alignment.getQuantity();
     if (!Ty->isIncompleteType() && !AlignVal)
       AlignVal = getContext().getTypeAlignInChars(Ty).getQuantity();
@@ -624,6 +629,7 @@ void CodeGenFunction::EmitTypeCheck(TypeCheckKind TCK, SourceLocation Loc,
   //       or call a non-static member function
   CXXRecordDecl *RD = Ty->getAsCXXRecordDecl();
   if (SanOpts.has(SanitizerKind::Vptr) &&
+      !SkippedChecks.has(SanitizerKind::Vptr) &&
       (TCK == TCK_MemberAccess || TCK == TCK_MemberCall ||
        TCK == TCK_DowncastPointer || TCK == TCK_DowncastReference ||
        TCK == TCK_UpcastToVirtualBase) &&
@@ -947,7 +953,7 @@ LValue CodeGenFunction::EmitUnsupportedLValue(const Expr *E,
                         E->getType());
 }
 
-bool CodeGenFunction::CanElideObjectPointerNullCheck(const Expr *Obj) {
+bool CodeGenFunction::IsDeclRefOrWrappedCXXThis(const Expr *Obj) {
   if (isa<DeclRefExpr>(Obj))
     return true;
 
@@ -980,11 +986,12 @@ LValue CodeGenFunction::EmitCheckedLValue(const Expr *E, TypeCheckKind TCK) {
   else
     LV = EmitLValue(E);
   if (!isa<DeclRefExpr>(E) && !LV.isBitField() && LV.isSimple()) {
-    bool SkipNullCheck = false;
+    SanitizerSet SkippedChecks;
     if (const auto *ME = dyn_cast<MemberExpr>(E))
-      SkipNullCheck = CanElideObjectPointerNullCheck(ME->getBase());
+      if (IsDeclRefOrWrappedCXXThis(ME->getBase()))
+        SkippedChecks.set(SanitizerKind::Null, true);
     EmitTypeCheck(TCK, E->getExprLoc(), LV.getPointer(),
-                  E->getType(), LV.getAlignment(), SkipNullCheck);
+                  E->getType(), LV.getAlignment(), SkippedChecks);
   }
   return LV;
 }
@@ -1063,7 +1070,19 @@ LValue CodeGenFunction::EmitLValue(const Expr *E) {
     const auto *cleanups = cast<ExprWithCleanups>(E);
     enterFullExpression(cleanups);
     RunCleanupsScope Scope(*this);
-    return EmitLValue(cleanups->getSubExpr());
+    LValue LV = EmitLValue(cleanups->getSubExpr());
+    if (LV.isSimple()) {
+      // Defend against branches out of gnu statement expressions surrounded by
+      // cleanups.
+      llvm::Value *V = LV.getPointer();
+      Scope.ForceCleanup({&V});
+      return LValue::MakeAddr(Address(V, LV.getAlignment()), LV.getType(),
+                              getContext(), LV.getAlignmentSource(),
+                              LV.getTBAAInfo());
+    }
+    // FIXME: Is it possible to create an ExprWithCleanups that produces a
+    // bitfield lvalue or some other non-simple lvalue?
+    return LV;
   }
 
   case Expr::CXXDefaultArgExprClass:
@@ -1295,6 +1314,53 @@ llvm::MDNode *CodeGenFunction::getRangeForLoadFromType(QualType Ty) {
   return MDHelper.createRange(Min, End);
 }
 
+bool CodeGenFunction::EmitScalarRangeCheck(llvm::Value *Value, QualType Ty,
+                                           SourceLocation Loc) {
+  bool HasBoolCheck = SanOpts.has(SanitizerKind::Bool);
+  bool HasEnumCheck = SanOpts.has(SanitizerKind::Enum);
+  if (!HasBoolCheck && !HasEnumCheck)
+    return false;
+
+  bool IsBool = hasBooleanRepresentation(Ty) ||
+                NSAPI(CGM.getContext()).isObjCBOOLType(Ty);
+  bool NeedsBoolCheck = HasBoolCheck && IsBool;
+  bool NeedsEnumCheck = HasEnumCheck && Ty->getAs<EnumType>();
+  if (!NeedsBoolCheck && !NeedsEnumCheck)
+    return false;
+
+  // Single-bit booleans don't need to be checked. Special-case this to avoid
+  // a bit width mismatch when handling bitfield values. This is handled by
+  // EmitFromMemory for the non-bitfield case.
+  if (IsBool &&
+      cast<llvm::IntegerType>(Value->getType())->getBitWidth() == 1)
+    return false;
+
+  llvm::APInt Min, End;
+  if (!getRangeForType(*this, Ty, Min, End, /*StrictEnums=*/true, IsBool))
+    return true;
+
+  SanitizerScope SanScope(this);
+  llvm::Value *Check;
+  --End;
+  if (!Min) {
+    Check = Builder.CreateICmpULE(
+        Value, llvm::ConstantInt::get(getLLVMContext(), End));
+  } else {
+    llvm::Value *Upper = Builder.CreateICmpSLE(
+        Value, llvm::ConstantInt::get(getLLVMContext(), End));
+    llvm::Value *Lower = Builder.CreateICmpSGE(
+        Value, llvm::ConstantInt::get(getLLVMContext(), Min));
+    Check = Builder.CreateAnd(Upper, Lower);
+  }
+  llvm::Constant *StaticArgs[] = {EmitCheckSourceLocation(Loc),
+                                  EmitCheckTypeDescriptor(Ty)};
+  SanitizerMask Kind =
+      NeedsEnumCheck ? SanitizerKind::Enum : SanitizerKind::Bool;
+  EmitCheck(std::make_pair(Check, Kind), SanitizerHandler::LoadInvalidValue,
+            StaticArgs, EmitCheckValue(Value));
+  return true;
+}
+
 llvm::Value *CodeGenFunction::EmitLoadOfScalar(Address Addr, bool Volatile,
                                                QualType Ty,
                                                SourceLocation Loc,
@@ -1347,35 +1413,9 @@ llvm::Value *CodeGenFunction::EmitLoadOfScalar(Address Addr, bool Volatile,
                                       false /*ConvertTypeToTag*/);
   }
 
-  bool IsBool = hasBooleanRepresentation(Ty) ||
-                NSAPI(CGM.getContext()).isObjCBOOLType(Ty);
-  bool NeedsBoolCheck = SanOpts.has(SanitizerKind::Bool) && IsBool;
-  bool NeedsEnumCheck =
-      SanOpts.has(SanitizerKind::Enum) && Ty->getAs<EnumType>();
-  if (NeedsBoolCheck || NeedsEnumCheck) {
-    SanitizerScope SanScope(this);
-    llvm::APInt Min, End;
-    if (getRangeForType(*this, Ty, Min, End, /*StrictEnums=*/true, IsBool)) {
-      --End;
-      llvm::Value *Check;
-      if (!Min)
-        Check = Builder.CreateICmpULE(
-          Load, llvm::ConstantInt::get(getLLVMContext(), End));
-      else {
-        llvm::Value *Upper = Builder.CreateICmpSLE(
-          Load, llvm::ConstantInt::get(getLLVMContext(), End));
-        llvm::Value *Lower = Builder.CreateICmpSGE(
-          Load, llvm::ConstantInt::get(getLLVMContext(), Min));
-        Check = Builder.CreateAnd(Upper, Lower);
-      }
-      llvm::Constant *StaticArgs[] = {
-        EmitCheckSourceLocation(Loc),
-        EmitCheckTypeDescriptor(Ty)
-      };
-      SanitizerMask Kind = NeedsEnumCheck ? SanitizerKind::Enum : SanitizerKind::Bool;
-      EmitCheck(std::make_pair(Check, Kind), SanitizerHandler::LoadInvalidValue,
-                StaticArgs, EmitCheckValue(Load));
-    }
+  if (EmitScalarRangeCheck(Load, Ty, Loc)) {
+    // In order to prevent the optimizer from throwing away the check, don't
+    // attach range metadata to the load.
   } else if (CGM.getCodeGenOpts().OptimizationLevel > 0)
     if (llvm::MDNode *RangeInfo = getRangeForLoadFromType(Ty))
       Load->setMetadata(llvm::LLVMContext::MD_range, RangeInfo);
@@ -1517,10 +1557,11 @@ RValue CodeGenFunction::EmitLoadOfLValue(LValue LV, SourceLocation Loc) {
     return EmitLoadOfGlobalRegLValue(LV);
 
   assert(LV.isBitField() && "Unknown LValue type!");
-  return EmitLoadOfBitfieldLValue(LV);
+  return EmitLoadOfBitfieldLValue(LV, Loc);
 }
 
-RValue CodeGenFunction::EmitLoadOfBitfieldLValue(LValue LV) {
+RValue CodeGenFunction::EmitLoadOfBitfieldLValue(LValue LV,
+                                                 SourceLocation Loc) {
   const CGBitFieldInfo &Info = LV.getBitFieldInfo();
 
   // Get the output type.
@@ -1545,7 +1586,7 @@ RValue CodeGenFunction::EmitLoadOfBitfieldLValue(LValue LV) {
                               "bf.clear");
   }
   Val = Builder.CreateIntCast(Val, ResLTy, Info.IsSigned, "bf.cast");
-
+  EmitScalarRangeCheck(Val, LV.getType(), Loc);
   return RValue::get(Val);
 }
 
@@ -2575,8 +2616,8 @@ static void emitCheckHandlerCall(CodeGenFunction &CGF,
 
   llvm::Value *Fn = CGF.CGM.CreateRuntimeFunction(
       FnType, FnName,
-      llvm::AttributeSet::get(CGF.getLLVMContext(),
-                              llvm::AttributeSet::FunctionIndex, B),
+      llvm::AttributeList::get(CGF.getLLVMContext(),
+                               llvm::AttributeList::FunctionIndex, B),
       /*Local=*/true);
   llvm::CallInst *HandlerCall = CGF.EmitNounwindRuntimeCall(Fn, FnArgs);
   if (!MayReturn) {
@@ -2851,7 +2892,7 @@ llvm::CallInst *CodeGenFunction::EmitTrapCall(llvm::Intrinsic::ID IntrID) {
   if (!CGM.getCodeGenOpts().TrapFuncName.empty()) {
     auto A = llvm::Attribute::get(getLLVMContext(), "trap-func-name",
                                   CGM.getCodeGenOpts().TrapFuncName);
-    TrapCall->addAttribute(llvm::AttributeSet::FunctionIndex, A);
+    TrapCall->addAttribute(llvm::AttributeList::FunctionIndex, A);
   }
 
   return TrapCall;
@@ -3365,9 +3406,11 @@ LValue CodeGenFunction::EmitMemberExpr(const MemberExpr *E) {
     AlignmentSource AlignSource;
     Address Addr = EmitPointerWithAlignment(BaseExpr, &AlignSource);
     QualType PtrTy = BaseExpr->getType()->getPointeeType();
-    bool SkipNullCheck = CanElideObjectPointerNullCheck(BaseExpr);
+    SanitizerSet SkippedChecks;
+    if (IsDeclRefOrWrappedCXXThis(BaseExpr))
+      SkippedChecks.set(SanitizerKind::Null, true);
     EmitTypeCheck(TCK_MemberAccess, E->getExprLoc(), Addr.getPointer(), PtrTy,
-                  /*Alignment=*/CharUnits::Zero(), SkipNullCheck);
+                  /*Alignment=*/CharUnits::Zero(), SkippedChecks);
     BaseLV = MakeAddrLValue(Addr, PtrTy, AlignSource);
   } else
     BaseLV = EmitCheckedLValue(BaseExpr, TCK_MemberAccess);

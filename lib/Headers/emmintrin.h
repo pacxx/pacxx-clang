@@ -1809,7 +1809,7 @@ _mm_setzero_pd(void)
 /// \brief Constructs a 128-bit floating-point vector of [2 x double]. The lower
 ///    64 bits are set to the lower 64 bits of the second parameter. The upper
 ///    64 bits are set to the upper 64 bits of the first parameter.
-//
+///
 /// \headerfile <x86intrin.h>
 ///
 /// This intrinsic corresponds to the <c> VBLENDPD / BLENDPD </c> instruction.
@@ -4809,5 +4809,13 @@ void _mm_pause(void);
 #undef __DEFAULT_FN_ATTRS
 
 #define _MM_SHUFFLE2(x, y) (((x) << 1) | (y))
+
+#define _MM_DENORMALS_ZERO_ON   (0x0040)
+#define _MM_DENORMALS_ZERO_OFF  (0x0000)
+
+#define _MM_DENORMALS_ZERO_MASK (0x0040)
+
+#define _MM_GET_DENORMALS_ZERO_MODE() (_mm_getcsr() & _MM_DENORMALS_ZERO_MASK)
+#define _MM_SET_DENORMALS_ZERO_MODE(x) (_mm_setcsr((_mm_getcsr() & ~_MM_DENORMALS_ZERO_MASK) | (x)))
 
 #endif /* __EMMINTRIN_H */

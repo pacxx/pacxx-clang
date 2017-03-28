@@ -1438,8 +1438,11 @@ struct ConvertConstructorToDeductionGuideTransform {
   unsigned Depth1IndexAdjustment = Template->getTemplateParameters()->size();
 
   /// Transform a constructor declaration into a deduction guide.
-  NamedDecl *transformConstructor(FunctionTemplateDecl *FTD, FunctionDecl *FD) {
+  NamedDecl *transformConstructor(FunctionTemplateDecl *FTD,
+                                  CXXConstructorDecl *CD) {
     SmallVector<TemplateArgument, 16> SubstArgs;
+
+    LocalInstantiationScope Scope(SemaRef);
 
     // C++ [over.match.class.deduct]p1:
     // -- For each constructor of the class template designated by the
@@ -1462,7 +1465,7 @@ struct ConvertConstructorToDeductionGuideTransform {
       for (NamedDecl *Param : *InnerParams) {
         MultiLevelTemplateArgumentList Args;
         Args.addOuterTemplateArguments(SubstArgs);
-        Args.addOuterTemplateArguments(None);
+        Args.addOuterRetainedLevel();
         NamedDecl *NewParam = transformTemplateParameter(Param, Args);
         if (!NewParam)
           return nullptr;
@@ -1482,10 +1485,10 @@ struct ConvertConstructorToDeductionGuideTransform {
     MultiLevelTemplateArgumentList Args;
     if (FTD) {
       Args.addOuterTemplateArguments(SubstArgs);
-      Args.addOuterTemplateArguments(None);
+      Args.addOuterRetainedLevel();
     }
 
-    FunctionProtoTypeLoc FPTL = FD->getTypeSourceInfo()->getTypeLoc()
+    FunctionProtoTypeLoc FPTL = CD->getTypeSourceInfo()->getTypeLoc()
                                    .getAsAdjusted<FunctionProtoTypeLoc>();
     assert(FPTL && "no prototype for constructor declaration");
 
@@ -1499,9 +1502,9 @@ struct ConvertConstructorToDeductionGuideTransform {
       return nullptr;
     TypeSourceInfo *NewTInfo = TLB.getTypeSourceInfo(SemaRef.Context, NewType);
 
-    return buildDeductionGuide(TemplateParams, FD->isExplicit(), NewTInfo,
-                               FD->getLocStart(), FD->getLocation(),
-                               FD->getLocEnd());
+    return buildDeductionGuide(TemplateParams, CD->isExplicit(), NewTInfo,
+                               CD->getLocStart(), CD->getLocation(),
+                               CD->getLocEnd());
   }
 
   /// Build a deduction guide with the specified parameter types.
@@ -1554,6 +1557,8 @@ private:
         if (InstantiatedDefaultArg)
           NewTTP->setDefaultArgument(InstantiatedDefaultArg);
       }
+      SemaRef.CurrentInstantiationScope->InstantiatedLocal(TemplateParam,
+                                                           NewTTP);
       return NewTTP;
     }
 
@@ -1677,17 +1682,15 @@ private:
                                  bool Explicit, TypeSourceInfo *TInfo,
                                  SourceLocation LocStart, SourceLocation Loc,
                                  SourceLocation LocEnd) {
+    DeclarationNameInfo Name(DeductionGuideName, Loc);
     ArrayRef<ParmVarDecl *> Params =
         TInfo->getTypeLoc().castAs<FunctionProtoTypeLoc>().getParams();
 
     // Build the implicit deduction guide template.
-    auto *Guide = FunctionDecl::Create(SemaRef.Context, DC, LocStart, Loc,
-                                       DeductionGuideName, TInfo->getType(),
-                                       TInfo, SC_None);
+    auto *Guide =
+        CXXDeductionGuideDecl::Create(SemaRef.Context, DC, LocStart, Explicit,
+                                      Name, TInfo->getType(), TInfo, LocEnd);
     Guide->setImplicit();
-    if (Explicit)
-      Guide->setExplicitSpecified();
-    Guide->setRangeEnd(LocEnd);
     Guide->setParams(Params);
 
     for (auto *Param : Params)
@@ -1749,16 +1752,16 @@ void Sema::DeclareImplicitDeductionGuides(TemplateDecl *Template,
     D = cast<NamedDecl>(D->getCanonicalDecl());
 
     auto *FTD = dyn_cast<FunctionTemplateDecl>(D);
-    auto *FD = FTD ? FTD->getTemplatedDecl() : dyn_cast<FunctionDecl>(D);
+    auto *CD =
+        dyn_cast_or_null<CXXConstructorDecl>(FTD ? FTD->getTemplatedDecl() : D);
     // Class-scope explicit specializations (MS extension) do not result in
     // deduction guides.
-    if (!FD || (!FTD && FD->isFunctionTemplateSpecialization()))
+    if (!CD || (!FTD && CD->isFunctionTemplateSpecialization()))
       continue;
 
-    Transform.transformConstructor(FTD, FD);
+    Transform.transformConstructor(FTD, CD);
     AddedAny = true;
 
-    CXXConstructorDecl *CD = cast<CXXConstructorDecl>(FD);
     AddedCopyOrMove |= CD->isCopyOrMoveConstructor();
   }
 
@@ -2841,6 +2844,13 @@ QualType Sema::CheckTemplateIdType(TemplateName Name,
       ClassTemplate->AddSpecialization(Decl, InsertPos);
       if (ClassTemplate->isOutOfLine())
         Decl->setLexicalDeclContext(ClassTemplate->getLexicalDeclContext());
+    }
+
+    if (Decl->getSpecializationKind() == TSK_Undeclared) {
+      MultiLevelTemplateArgumentList TemplateArgLists;
+      TemplateArgLists.addOuterTemplateArguments(Converted);
+      InstantiateAttrsForDecl(TemplateArgLists, ClassTemplate->getTemplatedDecl(),
+                              Decl);
     }
 
     // Diagnose uses of this specialization.
@@ -5663,6 +5673,19 @@ ExprResult Sema::CheckTemplateArgument(NonTypeTemplateParmDecl *Param,
 
   // If the parameter type somehow involves auto, deduce the type now.
   if (getLangOpts().CPlusPlus1z && ParamType->isUndeducedType()) {
+    // During template argument deduction, we allow 'decltype(auto)' to
+    // match an arbitrary dependent argument.
+    // FIXME: The language rules don't say what happens in this case.
+    // FIXME: We get an opaque dependent type out of decltype(auto) if the
+    // expression is merely instantiation-dependent; is this enough?
+    if (CTAK == CTAK_Deduced && Arg->isTypeDependent()) {
+      auto *AT = dyn_cast<AutoType>(ParamType);
+      if (AT && AT->isDecltypeAuto()) {
+        Converted = TemplateArgument(Arg);
+        return Arg;
+      }
+    }
+
     // When checking a deduced template argument, deduce from its type even if
     // the type is dependent, in order to check the types of non-type template
     // arguments line up properly in partial ordering.
@@ -6776,7 +6799,7 @@ static bool CheckTemplateSpecializationScope(Sema &S,
       // Do not warn for class scope explicit specialization during
       // instantiation, warning was already emitted during pattern
       // semantic analysis.
-      if (!S.ActiveTemplateInstantiations.size())
+      if (!S.inTemplateInstantiation())
         S.Diag(Loc, diag::ext_function_specialization_in_class)
           << Specialized;
     } else {

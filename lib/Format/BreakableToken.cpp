@@ -200,7 +200,8 @@ BreakableStringLiteral::BreakableStringLiteral(
 
 BreakableToken::Split
 BreakableStringLiteral::getSplit(unsigned LineIndex, unsigned TailOffset,
-                                 unsigned ColumnLimit) const {
+                                 unsigned ColumnLimit,
+                                 llvm::Regex &CommentPragmasRegex) const {
   return getStringSplit(Line.substr(TailOffset),
                         StartColumn + Prefix.size() + Postfix.size(),
                         ColumnLimit, Style.TabWidth, Encoding);
@@ -223,19 +224,21 @@ void BreakableStringLiteral::insertBreak(unsigned LineIndex,
 
 BreakableComment::BreakableComment(const FormatToken &Token,
                                    unsigned StartColumn,
-                                   unsigned OriginalStartColumn,
-                                   bool FirstInLine, bool InPPDirective,
+                                   bool InPPDirective,
                                    encoding::Encoding Encoding,
                                    const FormatStyle &Style)
     : BreakableToken(Token, InPPDirective, Encoding, Style),
-      StartColumn(StartColumn), OriginalStartColumn(OriginalStartColumn),
-      FirstInLine(FirstInLine) {}
+      StartColumn(StartColumn) {}
 
 unsigned BreakableComment::getLineCount() const { return Lines.size(); }
 
-BreakableToken::Split BreakableComment::getSplit(unsigned LineIndex,
-                                                 unsigned TailOffset,
-                                                 unsigned ColumnLimit) const {
+BreakableToken::Split
+BreakableComment::getSplit(unsigned LineIndex, unsigned TailOffset,
+                           unsigned ColumnLimit,
+                           llvm::Regex &CommentPragmasRegex) const {
+  // Don't break lines matching the comment pragmas regex.
+  if (CommentPragmasRegex.match(Content[LineIndex]))
+    return Split(StringRef::npos, 0);
   return getCommentSplit(Content[LineIndex].substr(TailOffset),
                          getContentStartColumn(LineIndex, TailOffset),
                          ColumnLimit, Style.TabWidth, Encoding);
@@ -325,8 +328,7 @@ BreakableBlockComment::BreakableBlockComment(
     const FormatToken &Token, unsigned StartColumn,
     unsigned OriginalStartColumn, bool FirstInLine, bool InPPDirective,
     encoding::Encoding Encoding, const FormatStyle &Style)
-    : BreakableComment(Token, StartColumn, OriginalStartColumn, FirstInLine,
-                       InPPDirective, Encoding, Style) {
+    : BreakableComment(Token, StartColumn, InPPDirective, Encoding, Style) {
   assert(Tok.is(TT_BlockComment) &&
          "block comment section must start with a block comment");
 
@@ -664,8 +666,7 @@ BreakableLineCommentSection::BreakableLineCommentSection(
     const FormatToken &Token, unsigned StartColumn,
     unsigned OriginalStartColumn, bool FirstInLine, bool InPPDirective,
     encoding::Encoding Encoding, const FormatStyle &Style)
-    : BreakableComment(Token, StartColumn, OriginalStartColumn, FirstInLine,
-                       InPPDirective, Encoding, Style) {
+    : BreakableComment(Token, StartColumn, InPPDirective, Encoding, Style) {
   assert(Tok.is(TT_LineComment) &&
          "line comment section must start with a line comment");
   FormatToken *LineTok = nullptr;

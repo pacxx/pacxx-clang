@@ -623,6 +623,11 @@ InitListChecker::FillInEmptyInitializations(const InitializedEntity &Entity,
   assert((ILE->getType() != SemaRef.Context.VoidTy) &&
          "Should not have void type");
 
+  // A transparent ILE is not performing aggregate initialization and should
+  // not be filled in.
+  if (ILE->isTransparent())
+    return;
+
   if (const RecordType *RType = ILE->getType()->getAs<RecordType>()) {
     const RecordDecl *RDecl = RType->getDecl();
     if (RDecl->isUnion() && ILE->getInitializedFieldInUnion())
@@ -902,7 +907,7 @@ static void warnBracedScalarInit(Sema &S, const InitializedEntity &Entity,
   // Don't warn during template instantiation. If the initialization was
   // non-dependent, we warned during the initial parse; otherwise, the
   // type might not be scalar in some uses of the template.
-  if (!S.ActiveTemplateInstantiations.empty())
+  if (S.inTemplateInstantiation())
     return;
 
   unsigned DiagID = 0;
@@ -3107,6 +3112,7 @@ bool InitializationSequence::isAmbiguous() const {
 
   switch (getFailureKind()) {
   case FK_TooManyInitsForReference:
+  case FK_ParenthesizedListInitForReference:
   case FK_ArrayNeedsInitList:
   case FK_ArrayNeedsInitListOrStringLiteral:
   case FK_ArrayNeedsInitListOrWideStringLiteral:
@@ -3124,6 +3130,7 @@ bool InitializationSequence::isAmbiguous() const {
   case FK_ConversionFailed:
   case FK_ConversionFromPropertyFailed:
   case FK_TooManyInitsForScalar:
+  case FK_ParenthesizedListInitForScalar:
   case FK_ReferenceBindingToInitList:
   case FK_InitListBadDestinationType:
   case FK_DefaultInitOfConst:
@@ -5174,6 +5181,12 @@ void InitializationSequence::InitializeFrom(Sema &S,
     // (Therefore, multiple arguments are not permitted.)
     if (Args.size() != 1)
       SetFailed(FK_TooManyInitsForReference);
+    // C++17 [dcl.init.ref]p5:
+    //   A reference [...] is initialized by an expression [...] as follows:
+    // If the initializer is not an expression, presumably we should reject,
+    // but the standard fails to actually say so.
+    else if (isa<InitListExpr>(Args[0]))
+      SetFailed(FK_ParenthesizedListInitForReference);
     else
       TryReferenceInitialization(S, Entity, Kind, Args[0], *this);
     return;
@@ -5339,11 +5352,16 @@ void InitializationSequence::InitializeFrom(Sema &S,
     return;
   }
 
+  assert(Args.size() >= 1 && "Zero-argument case handled above");
+
+  // The remaining cases all need a source type.
   if (Args.size() > 1) {
     SetFailed(FK_TooManyInitsForScalar);
     return;
+  } else if (isa<InitListExpr>(Args[0])) {
+    SetFailed(FK_ParenthesizedListInitForScalar);
+    return;
   }
-  assert(Args.size() == 1 && "Zero-argument case handled above");
 
   //    - Otherwise, if the source type is a (possibly cv-qualified) class
   //      type, conversion functions are considered.
@@ -6249,7 +6267,7 @@ static void CheckMoveOnConstruction(Sema &S, const Expr *InitExpr,
   if (!InitExpr)
     return;
 
-  if (!S.ActiveTemplateInstantiations.empty())
+  if (S.inTemplateInstantiation())
     return;
 
   QualType DestType = InitExpr->getType();
@@ -7384,6 +7402,10 @@ bool InitializationSequence::Diagnose(Sema &S,
       S.Diag(Kind.getLocation(), diag::err_reference_has_multiple_inits)
         << SourceRange(Args.front()->getLocStart(), Args.back()->getLocEnd());
     break;
+  case FK_ParenthesizedListInitForReference:
+    S.Diag(Kind.getLocation(), diag::err_list_init_in_parens)
+      << 1 << Entity.getType() << Args[0]->getSourceRange();
+    break;
 
   case FK_ArrayNeedsInitList:
     S.Diag(Kind.getLocation(), diag::err_array_init_not_init_list) << 0;
@@ -7595,6 +7617,11 @@ bool InitializationSequence::Diagnose(Sema &S,
     break;
   }
 
+  case FK_ParenthesizedListInitForScalar:
+    S.Diag(Kind.getLocation(), diag::err_list_init_in_parens)
+      << 0 << Entity.getType() << Args[0]->getSourceRange();
+    break;
+
   case FK_ReferenceBindingToInitList:
     S.Diag(Kind.getLocation(), diag::err_reference_bind_init_list)
       << DestType.getNonReferenceType() << Args[0]->getSourceRange();
@@ -7777,6 +7804,10 @@ void InitializationSequence::dump(raw_ostream &OS) const {
       OS << "too many initializers for reference";
       break;
 
+    case FK_ParenthesizedListInitForReference:
+      OS << "parenthesized list init for reference";
+      break;
+
     case FK_ArrayNeedsInitList:
       OS << "array requires initializer list";
       break;
@@ -7859,6 +7890,10 @@ void InitializationSequence::dump(raw_ostream &OS) const {
 
     case FK_TooManyInitsForScalar:
       OS << "too many initializers for scalar";
+      break;
+
+    case FK_ParenthesizedListInitForScalar:
+      OS << "parenthesized list init for reference";
       break;
 
     case FK_ReferenceBindingToInitList:
@@ -8296,10 +8331,10 @@ QualType Sema::DeduceTemplateSpecializationFromInitializer(
       if (D->isInvalidDecl())
         continue;
 
-      FunctionTemplateDecl *TD = dyn_cast<FunctionTemplateDecl>(D);
-      FunctionDecl *FD =
-          TD ? TD->getTemplatedDecl() : dyn_cast<FunctionDecl>(D);
-      if (!FD)
+      auto *TD = dyn_cast<FunctionTemplateDecl>(D);
+      auto *GD = dyn_cast_or_null<CXXDeductionGuideDecl>(
+          TD ? TD->getTemplatedDecl() : dyn_cast<FunctionDecl>(D));
+      if (!GD)
         continue;
 
       // C++ [over.match.ctor]p1: (non-list copy-initialization from non-class)
@@ -8309,21 +8344,21 @@ QualType Sema::DeduceTemplateSpecializationFromInitializer(
       //   The converting constructors of T are candidate functions.
       if (Kind.isCopyInit() && !ListInit) {
         // Only consider converting constructors.
-        if (FD->isExplicit())
+        if (GD->isExplicit())
           continue;
 
         // When looking for a converting constructor, deduction guides that
         // could never be called with one argument are not interesting to
         // check or note.
-        if (FD->getMinRequiredArguments() > 1 ||
-            (FD->getNumParams() == 0 && !FD->isVariadic()))
+        if (GD->getMinRequiredArguments() > 1 ||
+            (GD->getNumParams() == 0 && !GD->isVariadic()))
           continue;
       }
 
       // C++ [over.match.list]p1.1: (first phase list initialization)
       //   Initially, the candidate functions are the initializer-list
       //   constructors of the class T
-      if (OnlyListConstructors && !isInitListConstructor(FD))
+      if (OnlyListConstructors && !isInitListConstructor(GD))
         continue;
 
       // C++ [over.match.list]p1.2: (second phase list initialization)
@@ -8345,7 +8380,7 @@ QualType Sema::DeduceTemplateSpecializationFromInitializer(
                                      Inits, Candidates,
                                      SuppressUserConversions);
       else
-        AddOverloadCandidate(FD, I.getPair(), Inits, Candidates,
+        AddOverloadCandidate(GD, I.getPair(), Inits, Candidates,
                              SuppressUserConversions);
     }
     return Candidates.BestViableFunction(*this, Kind.getLocation(), Best);
@@ -8416,7 +8451,8 @@ QualType Sema::DeduceTemplateSpecializationFromInitializer(
     // C++ [over.match.list]p1:
     //   In copy-list-initialization, if an explicit constructor is chosen, the
     //   initialization is ill-formed.
-    if (Kind.isCopyInit() && ListInit && Best->Function->isExplicit()) {
+    if (Kind.isCopyInit() && ListInit &&
+        cast<CXXDeductionGuideDecl>(Best->Function)->isExplicit()) {
       bool IsDeductionGuide = !Best->Function->isImplicit();
       Diag(Kind.getLocation(), diag::err_deduced_class_template_explicit)
           << TemplateName << IsDeductionGuide;

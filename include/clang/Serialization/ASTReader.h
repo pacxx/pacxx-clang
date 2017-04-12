@@ -703,7 +703,7 @@ private:
 
   /// \brief Mapping from global preprocessing entity IDs to the module in
   /// which the preprocessed entity resides along with the offset that should be
-  /// added to the global preprocessing entitiy ID to produce a local ID.
+  /// added to the global preprocessing entity ID to produce a local ID.
   GlobalPreprocessedEntityMapType GlobalPreprocessedEntityMap;
 
   /// \name CodeGen-relevant special data
@@ -810,6 +810,17 @@ private:
   /// \brief The PragmaMSPointersToMembersKind pragma pointers_to_members state.
   int PragmaMSPointersToMembersState = -1;
   SourceLocation PointersToMembersPragmaLocation;
+
+  /// \brief The pragma pack state.
+  Optional<unsigned> PragmaPackCurrentValue;
+  SourceLocation PragmaPackCurrentLocation;
+  struct PragmaPackStackEntry {
+    unsigned Value;
+    SourceLocation Location;
+    StringRef SlotLabel;
+  };
+  llvm::SmallVector<PragmaPackStackEntry, 2> PragmaPackStack;
+  llvm::SmallVector<std::string, 2> PragmaPackStrings;
 
   /// \brief The OpenCL extension settings.
   OpenCLOptions OpenCLExtensions;
@@ -1103,6 +1114,8 @@ private:
   /// there are differences that the PCH reader can work around, this
   /// predefines buffer may contain additional definitions.
   std::string SuggestedPredefines;
+
+  llvm::DenseMap<const Decl *, bool> BodySource;
 
   /// \brief Reads a statement from the specified cursor.
   Stmt *ReadStmtFromStream(ModuleFile &F);
@@ -1986,7 +1999,7 @@ public:
   /// \brief Return a descriptor for the corresponding module.
   llvm::Optional<ASTSourceDescriptor> getSourceDescriptor(unsigned ID) override;
 
-  ExtKind hasExternalDefinitions(unsigned ID) override;
+  ExtKind hasExternalDefinitions(const Decl *D) override;
 
   /// \brief Retrieve a selector from the given module with its local ID
   /// number.

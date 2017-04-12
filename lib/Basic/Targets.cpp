@@ -1777,6 +1777,7 @@ public:
 };
 
 static const unsigned NVPTXAddrSpaceMap[] = {
+    0, // Default
     1, // opencl_global
     3, // opencl_local
     4, // opencl_constant
@@ -2031,6 +2032,7 @@ ArrayRef<const char *> NVPTXTargetInfo::getGCCRegNames() const {
 }
 
 static const LangAS::Map AMDGPUPrivateIsZeroMap = {
+    4,  // Default
     1,  // opencl_global
     3,  // opencl_local
     2,  // opencl_constant
@@ -2040,12 +2042,13 @@ static const LangAS::Map AMDGPUPrivateIsZeroMap = {
     3   // cuda_shared
 };
 static const LangAS::Map AMDGPUGenericIsZeroMap = {
+    0,  // Default
     1,  // opencl_global
     3,  // opencl_local
-    4,  // opencl_constant
+    2,  // opencl_constant
     0,  // opencl_generic
     1,  // cuda_device
-    4,  // cuda_constant
+    2,  // cuda_constant
     3   // cuda_shared
 };
 
@@ -2062,9 +2065,9 @@ static const char *const DataLayoutStringSIPrivateIsZero =
   "-v192:256-v256:256-v512:512-v1024:1024-v2048:2048-n32:64";
 
 static const char *const DataLayoutStringSIGenericIsZero =
-  "e-p:64:64-p1:64:64-p2:64:64-p3:32:32-p4:64:64-p5:32:32"
+  "e-p:64:64-p1:64:64-p2:64:64-p3:32:32-p4:32:32-p5:32:32"
   "-i64:64-v16:16-v24:32-v32:32-v48:64-v96:128"
-  "-v192:256-v256:256-v512:512-v1024:1024-v2048:2048-n32:64";
+  "-v192:256-v256:256-v512:512-v1024:1024-v2048:2048-n32:64-A5";
 
 class AMDGPUTargetInfo final : public TargetInfo {
   static const Builtin::Info BuiltinInfo[];
@@ -2077,7 +2080,7 @@ class AMDGPUTargetInfo final : public TargetInfo {
         Generic   = 0;
         Global    = 1;
         Local     = 3;
-        Constant  = 4;
+        Constant  = 2;
         Private   = 5;
       } else {
         Generic   = 4;
@@ -2139,6 +2142,7 @@ public:
                     (IsGenericZero ? DataLayoutStringSIGenericIsZero :
                         DataLayoutStringSIPrivateIsZero)
                     : DataLayoutStringR600);
+    assert(DataLayout->getAllocaAddrSpace() == AS.Private);
 
     AddrSpaceMap = IsGenericZero ? &AMDGPUGenericIsZeroMap :
         &AMDGPUPrivateIsZeroMap;
@@ -3194,6 +3198,7 @@ bool X86TargetInfo::initFeatureMap(
     setFeatureEnabledImpl(Features, "mpx", true);
     setFeatureEnabledImpl(Features, "sgx", true);
     setFeatureEnabledImpl(Features, "clflushopt", true);
+    setFeatureEnabledImpl(Features, "rtm", true);
     LLVM_FALLTHROUGH;
   case CK_Broadwell:
     setFeatureEnabledImpl(Features, "rdseed", true);
@@ -3204,7 +3209,6 @@ bool X86TargetInfo::initFeatureMap(
     setFeatureEnabledImpl(Features, "lzcnt", true);
     setFeatureEnabledImpl(Features, "bmi", true);
     setFeatureEnabledImpl(Features, "bmi2", true);
-    setFeatureEnabledImpl(Features, "rtm", true);
     setFeatureEnabledImpl(Features, "fma", true);
     setFeatureEnabledImpl(Features, "movbe", true);
     LLVM_FALLTHROUGH;
@@ -7408,6 +7412,7 @@ ArrayRef<const char *> MSP430TargetInfo::getGCCRegNames() const {
 // publicly available in http://tce.cs.tut.fi
 
 static const unsigned TCEOpenCLAddrSpaceMap[] = {
+    0, // Default
     3, // opencl_global
     4, // opencl_local
     5, // opencl_constant
@@ -8374,6 +8379,7 @@ const Builtin::Info Le64TargetInfo::BuiltinInfo[] = {
 };
 
 static const unsigned SPIRAddrSpaceMap[] = {
+    0, // Default
     1, // opencl_global
     3, // opencl_local
     2, // opencl_constant

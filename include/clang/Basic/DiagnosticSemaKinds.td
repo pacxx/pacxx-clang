@@ -369,7 +369,9 @@ def warn_decl_shadow :
           "local variable|"
           "variable in %2|"
           "static data member of %2|"
-          "field of %2}1">,
+          "field of %2|"
+          "typedef in %2|"
+          "type alias in %2}1">,
   InGroup<Shadow>, DefaultIgnore;
 def warn_decl_shadow_uncaptured_local :
   Warning<warn_decl_shadow.Text>,
@@ -1687,8 +1689,8 @@ def err_init_conversion_failed : Error<
   "cannot initialize %select{a variable|a parameter|return object|an "
   "exception object|a member subobject|an array element|a new value|a value|a "
   "base class|a constructor delegation|a vector element|a block element|a "
-  "complex element|a lambda capture|a compound literal initializer|a "
-  "related result|a parameter of CF audited function}0 "
+  "block element|a complex element|a lambda capture|a compound literal "
+  "initializer|a related result|a parameter of CF audited function}0 "
   "%diff{of type $ with an %select{rvalue|lvalue}2 of type $|"
   "with an %select{rvalue|lvalue}2 of incompatible type}1,3"
   "%select{|: different classes%diff{ ($ vs $)|}5,6"
@@ -3229,7 +3231,8 @@ def err_attribute_regparm_invalid_number : Error<
   "'regparm' parameter must be between 0 and %0 inclusive">;
 def err_attribute_not_supported_in_lang : Error<
   "%0 attribute is not supported in %select{C|C++|Objective-C}1">;
-
+def err_attribute_not_supported_on_arch
+    : Error<"%0 attribute is not supported on '%1'">;
 
 // Clang-Specific Attributes
 def warn_attribute_iboutlet : Warning<
@@ -8284,9 +8287,9 @@ def err_opencl_return_value_with_address_space : Error<
   "return value cannot be qualified with address space">;
 def err_opencl_constant_no_init : Error<
   "variable in constant address space must be initialized">;
-def err_atomic_init_constant : Error<
-  "atomic variable can only be assigned to a compile time constant"
-  " in the declaration statement in the program scope">;
+def err_opencl_atomic_init: Error<
+  "atomic variable can be %select{assigned|initialized}0 to a variable only "
+  "in global address space">;
 def err_opencl_implicit_vector_conversion : Error<
   "implicit conversions between vector types (%0 and %1) are not permitted">;
 def err_opencl_invalid_type_array : Error<

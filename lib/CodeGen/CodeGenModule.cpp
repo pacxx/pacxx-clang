@@ -160,12 +160,6 @@ CodeGenModule::CodeGenModule(ASTContext &C, const HeaderSearchOptions &HSO,
   // CoverageMappingModuleGen object.
   if (CodeGenOpts.CoverageMapping)
     CoverageMapping.reset(new CoverageMappingModuleGen(*this, *CoverageInfo));
-
-  // Record mregparm value now so it is visible through rest of codegen.
-  if (Context.getTargetInfo().getTriple().getArch() == llvm::Triple::x86)
-    getModule().addModuleFlag(llvm::Module::Error, "NumRegisterParameters",
-                              CodeGenOpts.NumRegisterParameters);
-
 }
 
 CodeGenModule::~CodeGenModule() {}
@@ -413,8 +407,10 @@ void CodeGenModule::Release() {
   EmitDeferredUnusedCoverageMappings();
   if (CoverageMapping)
     CoverageMapping->emit();
-  if (CodeGenOpts.SanitizeCfiCrossDso)
+  if (CodeGenOpts.SanitizeCfiCrossDso) {
     CodeGenFunction(*this).EmitCfiCheckFail();
+    CodeGenFunction(*this).EmitCfiCheckStub();
+  }
   emitAtAvailableLinkGuard();
   emitLLVMUsed();
   if (SanStats)
@@ -425,6 +421,11 @@ void CodeGenModule::Release() {
     EmitModuleLinkOptions();
   }
 
+  // Record mregparm value now so it is visible through rest of codegen.
+  if (Context.getTargetInfo().getTriple().getArch() == llvm::Triple::x86)
+    getModule().addModuleFlag(llvm::Module::Error, "NumRegisterParameters",
+                              CodeGenOpts.NumRegisterParameters);
+  
   if (CodeGenOpts.DwarfVersion) {
     // We actually want the latest version when there are conflicts.
     // We can change from Warning to Latest if such mode is supported.
@@ -1499,6 +1500,30 @@ bool CodeGenModule::isInSanitizerBlacklist(llvm::GlobalVariable *GV,
     }
   }
   return false;
+}
+
+bool CodeGenModule::imbueXRayAttrs(llvm::Function *Fn, SourceLocation Loc,
+                                   StringRef Category) const {
+  if (!LangOpts.XRayInstrument)
+    return false;
+  const auto &XRayFilter = getContext().getXRayFilter();
+  using ImbueAttr = XRayFunctionFilter::ImbueAttribute;
+  auto Attr = XRayFunctionFilter::ImbueAttribute::NONE;
+  if (Loc.isValid())
+    Attr = XRayFilter.shouldImbueLocation(Loc, Category);
+  if (Attr == ImbueAttr::NONE)
+    Attr = XRayFilter.shouldImbueFunction(Fn->getName());
+  switch (Attr) {
+  case ImbueAttr::NONE:
+    return false;
+  case ImbueAttr::ALWAYS:
+    Fn->addFnAttr("function-instrument", "xray-always");
+    break;
+  case ImbueAttr::NEVER:
+    Fn->addFnAttr("function-instrument", "xray-never");
+    break;
+  }
+  return true;
 }
 
 bool CodeGenModule::MustBeEmitted(const ValueDecl *Global) {
@@ -2955,13 +2980,11 @@ static void replaceUsesOfNonProtoConstant(llvm::Constant *old,
       continue;
 
     // Get the call site's attribute list.
-    SmallVector<llvm::AttributeList, 8> newAttrs;
+    SmallVector<llvm::AttributeSet, 8> newAttrs;
     llvm::AttributeList oldAttrs = callSite.getAttributes();
 
     // Collect any return attributes from the call.
-    if (oldAttrs.hasAttributes(llvm::AttributeList::ReturnIndex))
-      newAttrs.push_back(llvm::AttributeList::get(newFn->getContext(),
-                                                  oldAttrs.getRetAttributes()));
+    newAttrs.push_back(oldAttrs.getRetAttributes());
 
     // If the function was passed too few arguments, don't transform.
     unsigned newNumArgs = newFn->arg_size();
@@ -2979,16 +3002,12 @@ static void replaceUsesOfNonProtoConstant(llvm::Constant *old,
       }
 
       // Add any parameter attributes.
-      if (oldAttrs.hasAttributes(argNo + 1))
-        newAttrs.push_back(llvm::AttributeList::get(
-            newFn->getContext(), oldAttrs.getParamAttributes(argNo + 1)));
+      newAttrs.push_back(oldAttrs.getParamAttributes(argNo + 1));
     }
     if (dontTransform)
       continue;
 
-    if (oldAttrs.hasAttributes(llvm::AttributeList::FunctionIndex))
-      newAttrs.push_back(llvm::AttributeList::get(newFn->getContext(),
-                                                  oldAttrs.getFnAttributes()));
+    newAttrs.push_back(oldAttrs.getFnAttributes());
 
     // Okay, we can transform this.  Create the new call instruction and copy
     // over the required information.
@@ -3846,6 +3865,11 @@ void CodeGenModule::EmitTopLevelDecl(Decl *D) {
     EmitDeclContext(cast<NamespaceDecl>(D));
     break;
   case Decl::CXXRecord:
+    if (DebugInfo) {
+      if (auto *ES = D->getASTContext().getExternalSource())
+        if (ES->hasExternalDefinitions(D) == ExternalASTSource::EK_Never)
+          DebugInfo->completeUnusedClass(cast<CXXRecordDecl>(*D));
+    }
     // Emit any static data members, they may be definitions.
     for (auto *I : cast<CXXRecordDecl>(D)->decls())
       if (isa<VarDecl>(I) || isa<CXXRecordDecl>(I))

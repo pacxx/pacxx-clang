@@ -693,6 +693,18 @@ void CodeGenFunction::EmitPACXXKernelMetadata(const FunctionDecl *FD,
                                               llvm::Function *Fn)
 {
   if (FD->hasAttr<PACXXKernelAttr>()) {
+
+    if (FD->hasAttr<PACXXTargetAttr>()) {
+      auto Attr = FD->getAttr<PACXXTargetAttr>();
+      if (Attr->args_size() > 0) {
+        if (auto SL = dyn_cast<StringLiteral>(*(Attr->args_begin()))) {
+          llvm::Metadata *attrMDArgs[] = {
+              llvm::MDString::get(Fn->getContext(), SL->getString())};
+          Fn->setMetadata("pacxx.target", llvm::MDNode::get(Fn->getContext(), attrMDArgs));
+        }
+      };
+    }
+
     llvm::Module *M = Fn->getParent();
     llvm::LLVMContext &Ctx = M->getContext();
 

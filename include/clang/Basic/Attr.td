@@ -2551,21 +2551,21 @@ def InternalLinkage : InheritableAttr {
 
 
 def PACXXDevice : InheritableAttr {
-  let Spellings = [CXX11<"", "device", 201309>];
+  let Spellings = [CXX11<"pacxx", "device", 201309>];
   let LangOpts = [PACXX];
   let Subjects = SubjectList<[Var]>;
   let Documentation = [Undocumented];
 }
 
 def PACXXConstant : InheritableAttr {
-  let Spellings = [CXX11<"", "constant", 201309>];
+  let Spellings = [CXX11<"pacxx", "constant", 201309>];
   let LangOpts = [PACXX];
   let Subjects = SubjectList<[Var]>;
   let Documentation = [Undocumented];
 }
 
 def PACXXKernel : Attr {
-  let Spellings = [CXX11<"", "kernel", 201309>];
+  let Spellings = [CXX11<"pacxx", "kernel", 201309>];
   let LangOpts = [PACXX];
   let Subjects = SubjectList<[Function]>;
   let Args = [VariadicExprArgument<"Args">];
@@ -2573,7 +2573,7 @@ def PACXXKernel : Attr {
 }
 
 def PACXXReflection : Attr {
-  let Spellings = [CXX11<"", "reflect", 201309>];
+  let Spellings = [CXX11<"pacxx", "reflect", 201309>];
   let LangOpts = [PACXX];
   let Subjects = SubjectList<[Function]>;
   let Args = [VariadicExprArgument<"Args">];
@@ -2581,7 +2581,7 @@ def PACXXReflection : Attr {
 }
 
 def PACXXShared : InheritableAttr {
-  let Spellings = [CXX11<"", "shared", 201309>];
+  let Spellings = [CXX11<"pacxx", "shared", 201309>];
   let Subjects = SubjectList<[Var]>;
   let Documentation = [Undocumented];
 }
@@ -2593,3 +2593,10 @@ def PACXXDump : InheritableAttr {
   let Documentation = [Undocumented];
 }
 
+def PACXXTarget : InheritableAttr {
+  let Spellings = [CXX11<"pacxx", "target", 201309>];
+  let LangOpts = [PACXX];
+  let Subjects = SubjectList<[Function]>;
+  let Args = [VariadicExprArgument<"Args">];
+  let Documentation = [Undocumented];
+}

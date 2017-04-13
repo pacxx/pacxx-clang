@@ -5835,6 +5835,33 @@ static void handleOpenCLAccessAttr(Sema &S, Decl *D,
 }
 
 //===----------------------------------------------------------------------===//
+// PACXX MOD: Handling of Attributes
+//===----------------------------------------------------------------------===//
+
+
+static void handlePACXXTargetAttr(Sema &S, Decl *D,
+                                        const AttributeList &Attr) {
+
+  if (!checkAttributeAtLeastNumArgs(S, Attr, 1))
+    return;
+
+  StringRef target;
+  if (!S.checkStringLiteralArgumentAttr(Attr, 0, target))
+    return;
+
+  SmallVector<Expr*, 1> Args;
+
+  for (unsigned Idx = 0; Idx < Attr.getNumArgs(); ++Idx) {
+    Args.push_back(Attr.getArgAsExpr(Idx));
+  }
+
+  D->addAttr(::new (S.Context) PACXXTargetAttr(Attr.getRange(),
+                                                     S.Context,
+                                                     Args.data(), Args.size(),
+                                                     Attr.getAttributeSpellingListIndex()));
+}
+
+//===----------------------------------------------------------------------===//
 // Top Level Sema Entry Points
 //===----------------------------------------------------------------------===//
 
@@ -6463,6 +6490,9 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
   case AttributeList::AT_PACXXDump:
         handleSimpleAttribute<PACXXDumpAttr>(S, D, Attr);
         break;
+  case AttributeList::AT_PACXXTarget:
+    handlePACXXTargetAttr(S, D, Attr);
+    break;
   }
 }
 

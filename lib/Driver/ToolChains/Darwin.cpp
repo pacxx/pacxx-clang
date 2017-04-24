@@ -1035,6 +1035,8 @@ void DarwinClang::AddLinkRuntimeLibArgs(const ArgList &Args,
   const SanitizerArgs &Sanitize = getSanitizerArgs();
   if (Sanitize.needsAsanRt())
     AddLinkSanitizerLibArgs(Args, CmdArgs, "asan");
+  if (Sanitize.needsLsanRt())
+    AddLinkSanitizerLibArgs(Args, CmdArgs, "lsan");
   if (Sanitize.needsUbsanRt())
     AddLinkSanitizerLibArgs(Args, CmdArgs, "ubsan");
   if (Sanitize.needsTsanRt())
@@ -1684,7 +1686,8 @@ Darwin::TranslateArgs(const DerivedArgList &Args, StringRef BoundArch,
       A = *it;
       assert(A->getOption().getID() == options::OPT_static &&
              "missing expected -static argument");
-      it = DAL->getArgs().erase(it);
+      *it = nullptr;
+      ++it;
     }
   }
 
@@ -1891,6 +1894,7 @@ SanitizerMask Darwin::getSupportedSanitizers() const {
   const bool IsX86_64 = getTriple().getArch() == llvm::Triple::x86_64;
   SanitizerMask Res = ToolChain::getSupportedSanitizers();
   Res |= SanitizerKind::Address;
+  Res |= SanitizerKind::Leak;
   if (isTargetMacOS()) {
     if (!isMacosxVersionLT(10, 9))
       Res |= SanitizerKind::Vptr;

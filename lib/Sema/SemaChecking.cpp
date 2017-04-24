@@ -408,7 +408,7 @@ static bool SemaOpenCLBuiltinEnqueueKernel(Sema &S, CallExpr *TheCall) {
   }
 
   // Third argument is always an ndrange_t type.
-  if (Arg2->getType().getAsString() != "ndrange_t") {
+  if (Arg2->getType().getUnqualifiedType().getAsString() != "ndrange_t") {
     S.Diag(TheCall->getArg(2)->getLocStart(),
            diag::err_opencl_enqueue_kernel_expected_type)
         << "'ndrange_t'";
@@ -1391,8 +1391,6 @@ bool Sema::CheckARMBuiltinExclusiveCall(unsigned BuiltinID, CallExpr *TheCall,
 }
 
 bool Sema::CheckARMBuiltinFunctionCall(unsigned BuiltinID, CallExpr *TheCall) {
-  llvm::APSInt Result;
-
   if (BuiltinID == ARM::BI__builtin_arm_ldrex ||
       BuiltinID == ARM::BI__builtin_arm_ldaex ||
       BuiltinID == ARM::BI__builtin_arm_strex ||
@@ -1439,8 +1437,6 @@ bool Sema::CheckARMBuiltinFunctionCall(unsigned BuiltinID, CallExpr *TheCall) {
 
 bool Sema::CheckAArch64BuiltinFunctionCall(unsigned BuiltinID,
                                          CallExpr *TheCall) {
-  llvm::APSInt Result;
-
   if (BuiltinID == AArch64::BI__builtin_arm_ldrex ||
       BuiltinID == AArch64::BI__builtin_arm_ldaex ||
       BuiltinID == AArch64::BI__builtin_arm_strex ||

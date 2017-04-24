@@ -48,6 +48,8 @@ public:
 
   void setASTContext(ASTContext &ctx) { Ctx = &ctx; }
 
+  bool shouldIndex(const Decl *D);
+
   bool shouldSuppressRefs() const {
     return false;
   }
@@ -80,7 +82,8 @@ public:
 
   bool indexDecl(const Decl *D);
 
-  void indexTagDecl(const TagDecl *D);
+  void indexTagDecl(const TagDecl *D,
+                    ArrayRef<SymbolRelation> Relations = None);
 
   void indexTypeSourceInfo(TypeSourceInfo *TInfo, const NamedDecl *Parent,
                            const DeclContext *DC = nullptr,

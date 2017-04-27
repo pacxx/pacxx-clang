@@ -1409,6 +1409,27 @@ LANGBUILTIN(to_private, "v*v*", "tn", OCLC20_LANG)
 BUILTIN(__builtin_os_log_format_buffer_size, "zcC*.", "p:0:nut")
 BUILTIN(__builtin_os_log_format, "v*v*cC*.", "p:0:nt")
 
+// Builtins for PACXX
+BUILTIN(__pacxx_read_tid_x, "i", "nc")
+BUILTIN(__pacxx_read_tid_y, "i", "nc")
+BUILTIN(__pacxx_read_tid_z, "i", "nc")
+BUILTIN(__pacxx_read_tid_w, "i", "nc")
+
+BUILTIN(__pacxx_read_ntid_x, "i", "nc")
+BUILTIN(__pacxx_read_ntid_y, "i", "nc")
+BUILTIN(__pacxx_read_ntid_z, "i", "nc")
+BUILTIN(__pacxx_read_ntid_w, "i", "nc")
+
+BUILTIN(__pacxx_read_ctaid_x, "i", "nc")
+BUILTIN(__pacxx_read_ctaid_y, "i", "nc")
+BUILTIN(__pacxx_read_ctaid_z, "i", "nc")
+BUILTIN(__pacxx_read_ctaid_w, "i", "nc")
+
+BUILTIN(__pacxx_read_nctaid_x, "i", "nc")
+BUILTIN(__pacxx_read_nctaid_y, "i", "nc")
+BUILTIN(__pacxx_read_nctaid_z, "i", "nc")
+BUILTIN(__pacxx_read_nctaid_w, "i", "nc")
+
 #undef BUILTIN
 #undef LIBBUILTIN
 #undef LANGBUILTIN

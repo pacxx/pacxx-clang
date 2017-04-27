@@ -339,6 +339,18 @@ static llvm::Value *EmitOverflowIntrinsic(CodeGenFunction &CGF,
   return CGF.Builder.CreateExtractValue(Tmp, 0);
 }
 
+/// \brief Emit a call to a PACXX intrisic
+///
+/// \arg CGF The current codegen function.
+/// \arg IntrinsicID The ID for the Intrinsic we wish to generate.
+/// \returns The call to the intrinsic.
+static llvm::Value *EmitPACXXIntrinsic(CodeGenFunction &CGF,
+                                       const llvm::Intrinsic::ID IntrinsicID) {
+  llvm::Value *F = CGF.CGM.getIntrinsic(IntrinsicID);
+
+  return CGF.Builder.CreateCall(F);
+}
+
 static Value *emitRangedBuiltin(CodeGenFunction &CGF,
                                 unsigned IntrinsicID,
                                 int low, int high) {
@@ -2768,6 +2780,94 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
     analyze_os_log::computeOSLogBufferLayout(CGM.getContext(), E, Layout);
     return RValue::get(ConstantInt::get(ConvertType(E->getType()),
                                         Layout.size().getQuantity()));
+  }
+
+  case Builtin::BI__pacxx_read_ntid_x:
+  case Builtin::BI__pacxx_read_ntid_y:
+  case Builtin::BI__pacxx_read_ntid_z:
+  case Builtin::BI__pacxx_read_ntid_w:
+  case Builtin::BI__pacxx_read_tid_x:
+  case Builtin::BI__pacxx_read_tid_y:
+  case Builtin::BI__pacxx_read_tid_z:
+  case Builtin::BI__pacxx_read_tid_w:
+  case Builtin::BI__pacxx_read_ctaid_x:
+  case Builtin::BI__pacxx_read_ctaid_y:
+  case Builtin::BI__pacxx_read_ctaid_z:
+  case Builtin::BI__pacxx_read_ctaid_w:
+  case Builtin::BI__pacxx_read_nctaid_x:
+  case Builtin::BI__pacxx_read_nctaid_y:
+  case Builtin::BI__pacxx_read_nctaid_z:
+  case Builtin::BI__pacxx_read_nctaid_w: {
+    llvm::Intrinsic::ID IntrinsicId;
+
+    switch (BuiltinID) {
+      // PACXX MOD: pacxx specific builtins
+    case Builtin::BI__pacxx_read_ntid_x: {
+      IntrinsicId = llvm::Intrinsic::pacxx_read_ntid_x;
+      break;
+    }
+    case Builtin::BI__pacxx_read_ntid_y: {
+      IntrinsicId = llvm::Intrinsic::pacxx_read_ntid_y;
+      break;
+    }
+    case Builtin::BI__pacxx_read_ntid_z: {
+      IntrinsicId = llvm::Intrinsic::pacxx_read_ntid_z;
+      break;
+    }
+    case Builtin::BI__pacxx_read_ntid_w: {
+      IntrinsicId = llvm::Intrinsic::pacxx_read_ntid_w;
+      break;
+    }
+    case Builtin::BI__pacxx_read_tid_x: {
+      IntrinsicId = llvm::Intrinsic::pacxx_read_tid_x;
+      break;
+    }
+    case Builtin::BI__pacxx_read_tid_y: {
+      IntrinsicId = llvm::Intrinsic::pacxx_read_tid_y;
+      break;
+    }
+    case Builtin::BI__pacxx_read_tid_z: {
+      IntrinsicId = llvm::Intrinsic::pacxx_read_tid_z;
+      break;
+    }
+    case Builtin::BI__pacxx_read_tid_w: {
+      IntrinsicId = llvm::Intrinsic::pacxx_read_tid_w;
+      break;
+    }
+    case Builtin::BI__pacxx_read_ctaid_x: {
+      IntrinsicId = llvm::Intrinsic::pacxx_read_ctaid_x;
+      break;
+    }
+    case Builtin::BI__pacxx_read_ctaid_y: {
+      IntrinsicId = llvm::Intrinsic::pacxx_read_ctaid_y;
+      break;
+    }
+    case Builtin::BI__pacxx_read_ctaid_z: {
+      IntrinsicId = llvm::Intrinsic::pacxx_read_ctaid_z;
+      break;
+    }
+    case Builtin::BI__pacxx_read_ctaid_w: {
+      IntrinsicId = llvm::Intrinsic::pacxx_read_ctaid_w;
+      break;
+    }
+    case Builtin::BI__pacxx_read_nctaid_x: {
+      IntrinsicId = llvm::Intrinsic::pacxx_read_nctaid_x;
+      break;
+    }
+    case Builtin::BI__pacxx_read_nctaid_y: {
+      IntrinsicId = llvm::Intrinsic::pacxx_read_nctaid_y;
+      break;
+    }
+    case Builtin::BI__pacxx_read_nctaid_z: {
+      IntrinsicId = llvm::Intrinsic::pacxx_read_nctaid_z;
+      break;
+    }
+    case Builtin::BI__pacxx_read_nctaid_w: {
+      IntrinsicId = llvm::Intrinsic::pacxx_read_nctaid_w;
+      break;
+    }
+    }
+    return RValue::get(EmitPACXXIntrinsic(*this, IntrinsicId));
   }
   }
 

@@ -1076,6 +1076,8 @@ void clang::InitializePreprocessor(
 
   // Install things like __POWERPC__, __GNUC__, etc into the macro table.
   if (InitOpts.UsePredefines) {
+    // FIXME: This will create multiple definitions for most of the predefined
+    // macros. This is not the right way to handle this.
     if (LangOpts.CUDA && PP.getAuxTargetInfo())
       InitializePredefinedMacros(*PP.getAuxTargetInfo(), LangOpts, FEOpts,
                                  Builder);

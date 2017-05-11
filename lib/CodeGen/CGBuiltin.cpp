@@ -2807,7 +2807,8 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
       Arg1 = Builder.CreateTruncOrBitCast(Arg1, PTy1);
     return RValue::get(Builder.CreateCall(F, {Arg0Val, Arg1}));
   }
-case Builtin::BI__pacxx_read_ntid_x:
+  case Builtin::BI__pacxx_barrier:
+  case Builtin::BI__pacxx_read_ntid_x:
   case Builtin::BI__pacxx_read_ntid_y:
   case Builtin::BI__pacxx_read_ntid_z:
   case Builtin::BI__pacxx_read_ntid_w:
@@ -2827,6 +2828,10 @@ case Builtin::BI__pacxx_read_ntid_x:
 
     switch (BuiltinID) {
       // PACXX MOD: pacxx specific builtins
+    case Builtin::BI__pacxx_barrier: {
+      IntrinsicId = llvm::Intrinsic::pacxx_barrier0;
+      break;
+    }
     case Builtin::BI__pacxx_read_ntid_x: {
       IntrinsicId = llvm::Intrinsic::pacxx_read_ntid_x;
       break;

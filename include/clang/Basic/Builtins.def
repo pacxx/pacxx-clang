@@ -1433,6 +1433,8 @@ BUILTIN(__pacxx_read_nctaid_y, "i", "nc")
 BUILTIN(__pacxx_read_nctaid_z, "i", "nc")
 BUILTIN(__pacxx_read_nctaid_w, "i", "nc")
 
+BUILTIN(__pacxx_barrier, "v", "nc")
+
 #undef BUILTIN
 #undef LIBBUILTIN
 #undef LANGBUILTIN

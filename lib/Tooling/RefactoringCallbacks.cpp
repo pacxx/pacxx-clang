@@ -38,7 +38,7 @@ void ASTMatchRefactorer::addDynamicMatcher(
 
 class RefactoringASTConsumer : public ASTConsumer {
 public:
-  RefactoringASTConsumer(ASTMatchRefactorer &Refactoring)
+  explicit RefactoringASTConsumer(ASTMatchRefactorer &Refactoring)
       : Refactoring(Refactoring) {}
 
   void HandleTranslationUnit(ASTContext &Context) override {
@@ -153,8 +153,8 @@ void ReplaceIfStmtWithItsBody::run(
 }
 
 ReplaceNodeWithTemplate::ReplaceNodeWithTemplate(
-    llvm::StringRef FromId, std::vector<TemplateElement> &&Template)
-    : FromId(FromId), Template(Template) {}
+    llvm::StringRef FromId, std::vector<TemplateElement> Template)
+    : FromId(FromId), Template(std::move(Template)) {}
 
 llvm::Expected<std::unique_ptr<ReplaceNodeWithTemplate>>
 ReplaceNodeWithTemplate::create(StringRef FromId, StringRef ToTemplate) {
@@ -171,7 +171,7 @@ ReplaceNodeWithTemplate::create(StringRef FromId, StringRef ToTemplate) {
           return make_error<StringError>(
               "Unterminated ${...} in replacement template near " +
                   ToTemplate.substr(Index),
-              std::make_error_code(std::errc::bad_message));
+              llvm::inconvertibleErrorCode());
         }
         std::string SourceNodeName =
             ToTemplate.substr(Index + 2, EndOfIdentifier - Index - 2);
@@ -182,7 +182,7 @@ ReplaceNodeWithTemplate::create(StringRef FromId, StringRef ToTemplate) {
         return make_error<StringError>(
             "Invalid $ in replacement template near " +
                 ToTemplate.substr(Index),
-            std::make_error_code(std::errc::bad_message));
+            llvm::inconvertibleErrorCode());
       }
     } else {
       size_t NextIndex = ToTemplate.find('$', Index + 1);

@@ -961,10 +961,19 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
 
   // PACXX MOD: kernels and reflection calls are never inlined by the standard
   // llvm inline pass
+  // TODO: extract into an own function that handles all the PACXX related
+  // modifications on the generated function
   if (D->hasAttr<PACXXKernelAttr>() || D->hasAttr<PACXXReflectionAttr>()) {
     B.addAttribute(llvm::Attribute::NoInline);
     F->setLinkage(llvm::GlobalValue::LinkageTypes::ExternalLinkage);
     F->setVisibility(llvm::GlobalValue::VisibilityTypes::DefaultVisibility);
+
+    // add pacxx metadata
+    llvm::NamedMDNode *pacxxMD = F->getParent()->getOrInsertNamedMetadata("pacxx.kernel");
+    llvm::SmallVector<llvm::Metadata *, 1> mdArgs;
+    mdArgs.push_back(llvm::ConstantAsMetadata::get(F));
+    pacxxMD->addOperand(llvm::MDNode::get(F->getContext(), mdArgs));
+    F->getParent()->getOrInsertNamedMetadata("pacxx.kernel." + F->getName().str());
   }
 
   F->addAttributes(llvm::AttributeList::FunctionIndex, B);

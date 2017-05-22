@@ -2728,7 +2728,7 @@ def PACXXKernel : Attr {
 }
 
 def PACXXReflection : Attr {
-  let Spellings = [CXX11<"pacxx", "reflect", 201309>];
+  let Spellings = [CXX11<"pacxx", "staging", 201309>];
   let LangOpts = [PACXX];
   let Subjects = SubjectList<[Function]>;
   let Args = [VariadicExprArgument<"Args">];

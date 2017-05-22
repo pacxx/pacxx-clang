@@ -8059,12 +8059,8 @@ ABIArgInfo PACXXABIInfo::classifyReturnType(QualType RetTy) const {
 }
 
 ABIArgInfo PACXXABIInfo::classifyArgumentType(QualType Ty) const {
-  // Treat an enum type as its underlying type.
-  if (const EnumType *EnumTy = Ty->getAs<EnumType>())
-    Ty = EnumTy->getDecl()->getIntegerType();
 
-  return (Ty->isPromotableIntegerType() ? ABIArgInfo::getExtend()
-                                        : ABIArgInfo::getDirect());
+  return ABIArgInfo::getDirect();
 }
 
 void PACXXABIInfo::computeInfo(CGFunctionInfo &FI) const {

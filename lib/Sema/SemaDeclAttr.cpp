@@ -5885,7 +5885,6 @@ static void handleOpenCLAccessAttr(Sema &S, Decl *D,
 // PACXX MOD: Handling of Attributes
 //===----------------------------------------------------------------------===//
 
-
 static void handlePACXXTargetAttr(Sema &S, Decl *D,
                                         const AttributeList &Attr) {
 

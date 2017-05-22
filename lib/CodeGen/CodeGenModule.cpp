@@ -961,8 +961,10 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
 
   // PACXX MOD: kernels and reflection calls are never inlined by the standard
   // llvm inline pass
-  if (D->hasAttr<PACXXKernelAttr>()) {
+  if (D->hasAttr<PACXXKernelAttr>() || D->hasAttr<PACXXReflectionAttr>()) {
     B.addAttribute(llvm::Attribute::NoInline);
+    F->setLinkage(llvm::GlobalValue::LinkageTypes::ExternalLinkage);
+    F->setVisibility(llvm::GlobalValue::VisibilityTypes::DefaultVisibility);
   }
 
   F->addAttributes(llvm::AttributeList::FunctionIndex, B);
@@ -978,11 +980,6 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
   if (getTarget().getCXXABI().areMemberFunctionsAligned()) {
     if (F->getAlignment() < 2 && isa<CXXMethodDecl>(D))
       F->setAlignment(2);
-  }
-
-  if (D->hasAttr<PACXXKernelAttr>()) {
-    F->setLinkage(llvm::GlobalValue::LinkageTypes::ExternalLinkage);
-    F->setVisibility(llvm::GlobalValue::VisibilityTypes::DefaultVisibility);
   }
 
   // In the cross-dso CFI mode, we want !type attributes on definitions only.

@@ -644,14 +644,6 @@ class Preprocessor {
   /// of that list.
   MacroInfoChain *MIChainHead;
 
-  struct DeserializedMacroInfoChain {
-    MacroInfo MI;
-    unsigned OwningModuleID; // MUST be immediately after the MacroInfo object
-                     // so it can be accessed by MacroInfo::getOwningModuleID().
-    DeserializedMacroInfoChain *Next;
-  };
-  DeserializedMacroInfoChain *DeserialMIChainHead;
-
   void updateOutOfDateIdentifier(IdentifierInfo &II) const;
 
 public:
@@ -1669,10 +1661,6 @@ public:
   /// \brief Allocate a new MacroInfo object with the provided SourceLocation.
   MacroInfo *AllocateMacroInfo(SourceLocation L);
 
-  /// \brief Allocate a new MacroInfo object loaded from an AST file.
-  MacroInfo *AllocateDeserializedMacroInfo(SourceLocation L,
-                                           unsigned SubModuleID);
-
   /// \brief Turn the specified lexer token into a fully checked and spelled
   /// filename, e.g. as an operand of \#include. 
   ///
@@ -1763,9 +1751,6 @@ private:
   /// Update the set of active module macros and ambiguity flag for a module
   /// macro name.
   void updateModuleMacroInfo(const IdentifierInfo *II, ModuleMacroInfo &Info);
-
-  /// \brief Allocate a new MacroInfo object.
-  MacroInfo *AllocateMacroInfo();
 
   DefMacroDirective *AllocateDefMacroDirective(MacroInfo *MI,
                                                SourceLocation Loc);
@@ -1932,14 +1917,11 @@ public:
   /// into a module, or is outside any module, returns nullptr.
   Module *getModuleForLocation(SourceLocation Loc);
 
-  /// \brief Find the module that contains the specified location, either
-  /// directly or indirectly.
-  Module *getModuleContainingLocation(SourceLocation Loc);
-
   /// \brief We want to produce a diagnostic at location IncLoc concerning a
   /// missing module import.
   ///
   /// \param IncLoc The location at which the missing import was detected.
+  /// \param M The desired module.
   /// \param MLoc A location within the desired module at which some desired
   ///        effect occurred (eg, where a desired entity was declared).
   ///
@@ -1947,6 +1929,7 @@ public:
   ///         Null if no such file could be determined or if a #include is not
   ///         appropriate.
   const FileEntry *getModuleHeaderToIncludeForDiagnostics(SourceLocation IncLoc,
+                                                          Module *M,
                                                           SourceLocation MLoc);
 
 private:

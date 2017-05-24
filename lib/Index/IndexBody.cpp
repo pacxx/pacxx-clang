@@ -165,6 +165,9 @@ public:
     if (!TD)
       return true;
     CXXRecordDecl *RD = TD->getTemplatedDecl();
+    if (!RD->hasDefinition())
+      return true;
+    RD = RD->getDefinition();
     std::vector<const NamedDecl *> Symbols =
         RD->lookupDependentName(NameInfo.getName(), Filter);
     // FIXME: Improve overload handling.
@@ -243,6 +246,9 @@ public:
   }
 
   bool VisitObjCPropertyRefExpr(ObjCPropertyRefExpr *E) {
+    if (E->isClassReceiver())
+      IndexCtx.handleReference(E->getClassReceiver(), E->getReceiverLocation(),
+                               Parent, ParentDC);
     if (E->isExplicitProperty()) {
       SmallVector<SymbolRelation, 2> Relations;
       SymbolRoleSet Roles = getRolesForRef(E, Relations);

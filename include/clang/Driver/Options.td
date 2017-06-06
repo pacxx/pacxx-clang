@@ -125,6 +125,9 @@ def pedantic_Group : OptionGroup<"<pedantic group>">, Group<f_Group>,
 def opencl_Group : OptionGroup<"<opencl group>">, Group<f_Group>,
                    DocName<"OpenCL flags">;
 
+def pacxx_Group : OptionGroup<"<pacxx group>">, Group<f_Group>,
+                  DocName<"PACXX flags">;
+
 def m_Group : OptionGroup<"<m group>">, Group<CompileOnly_Group>,
               DocName<"Target-dependent compilation options">;
 
@@ -2595,3 +2598,6 @@ defm whole_file : BooleanFFlag<"whole-file">, Group<gfortran_Group>;
 include "CC1Options.td"
 
 include "CLCompatOptions.td"
+
+include "PACXXOptions.td"
+

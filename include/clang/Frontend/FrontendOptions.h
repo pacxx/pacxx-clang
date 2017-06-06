@@ -324,6 +324,9 @@ public:
   /// Filename to write statistics to.
   std::string StatsFile;
 
+  /// PACXX compilation mode
+  bool PACXXCompilationMode;
+
 public:
   FrontendOptions() :
     DisableFree(false), RelocatablePCH(false), ShowHelp(false),
@@ -334,7 +337,7 @@ public:
     GenerateGlobalModuleIndex(true), ASTDumpDecls(false), ASTDumpLookups(false),
     BuildingImplicitModule(false), ModulesEmbedAllFiles(false),
     IncludeTimestamps(true), ARCMTAction(ARCMT_None),
-    ObjCMTAction(ObjCMT_None), ProgramAction(frontend::ParseSyntaxOnly)
+    ObjCMTAction(ObjCMT_None), ProgramAction(frontend::ParseSyntaxOnly), PACXXCompilationMode(false)
   {}
 
   /// getInputKindForExtension - Return the appropriate input kind for a file

@@ -3696,6 +3696,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                                  options::OPT_fno_ms_extensions, true))))
     CmdArgs.push_back("-fms-compatibility");
 
+  if (Args.hasArg(options::OPT_pacxx))
+    Args.AddLastArg(CmdArgs, options::OPT_pacxx);
+
   VersionTuple MSVT =
       getToolChain().computeMSVCVersion(&getToolChain().getDriver(), Args);
   if (!MSVT.empty())

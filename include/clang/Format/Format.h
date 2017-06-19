@@ -688,6 +688,18 @@ struct FormatStyle {
     bool BeforeElse;
     /// \brief Indent the wrapped braces themselves.
     bool IndentBraces;
+    /// \brief If ``false``, empty function body can be put on a single line.
+    /// This option is used only if the opening brace of the function has
+    /// already been wrapped, i.e. the `AfterFunction` brace wrapping mode is
+    /// set, and the function could/should not be put on a single line (as per
+    /// `AllowShortFunctionsOnASingleLine` and constructor formatting options).
+    /// \code
+    ///   int f()   vs.   inf f()
+    ///   {}              {
+    ///                   }
+    /// \endcode
+    ///
+    bool SplitEmptyFunctionBody;
   };
 
   /// \brief Control of individual brace wrapping cases.
@@ -710,16 +722,35 @@ struct FormatStyle {
   /// \endcode
   bool BreakBeforeTernaryOperators;
 
-  /// \brief Always break constructor initializers before commas and align
-  /// the commas with the colon.
-  /// \code
-  ///    true:                                  false:
-  ///    SomeClass::Constructor()       vs.     SomeClass::Constructor() : a(a),
-  ///        : a(a)                                                   b(b),
-  ///        , b(b)                                                   c(c) {}
-  ///        , c(c) {}
-  /// \endcode
-  bool BreakConstructorInitializersBeforeComma;
+  /// \brief Different ways to break initializers.
+  enum BreakConstructorInitializersStyle
+  {
+    /// Break constructor initializers before the colon and after the commas.
+    /// \code
+    /// Constructor()
+    ///     : initializer1(),
+    ///       initializer2()
+    /// \endcode
+    BCIS_BeforeColon,
+    /// Break constructor initializers before the colon and commas, and align
+    /// the commas with the colon.
+    /// \code
+    /// Constructor()
+    ///     : initializer1()
+    ///     , initializer2()
+    /// \endcode
+    BCIS_BeforeComma,
+    /// Break constructor initializers after the colon and commas.
+    /// \code
+    /// Constructor() :
+    ///     initializer1(),
+    ///     initializer2()
+    /// \endcode
+    BCIS_AfterColon
+  };
+
+  /// \brief The constructor initializers style to use..
+  BreakConstructorInitializersStyle BreakConstructorInitializers;
 
   /// \brief Break after each annotation on a field in Java files.
   /// \code{.java}
@@ -759,6 +790,29 @@ struct FormatStyle {
   ///    };
   /// \endcode
   bool BreakBeforeInheritanceComma;
+
+  /// \brief If ``true``, consecutive namespace declarations will be on the same
+  /// line. If ``false``, each namespace is declared on a new line.
+  /// \code
+  ///   true:
+  ///   namespace Foo { namespace Bar {
+  ///   }}
+  ///
+  ///   false:
+  ///   namespace Foo {
+  ///   namespace Bar {
+  ///   }
+  ///   }
+  /// \endcode
+  ///
+  /// If it does not fit on a single line, the overflowing namespaces get
+  /// wrapped:
+  /// \code
+  ///   namespace Foo { namespace Bar {
+  ///   namespace Extra {
+  ///   }}}
+  /// \endcode
+  bool CompactNamespaces;
 
   /// \brief If the constructor initializers don't fit on a line, put each
   /// initializer on its own line.
@@ -1390,8 +1444,8 @@ struct FormatStyle {
            BreakBeforeBinaryOperators == R.BreakBeforeBinaryOperators &&
            BreakBeforeBraces == R.BreakBeforeBraces &&
            BreakBeforeTernaryOperators == R.BreakBeforeTernaryOperators &&
-           BreakConstructorInitializersBeforeComma ==
-               R.BreakConstructorInitializersBeforeComma &&
+           BreakConstructorInitializers == R.BreakConstructorInitializers &&
+           CompactNamespaces == R.CompactNamespaces &&
            BreakAfterJavaFieldAnnotations == R.BreakAfterJavaFieldAnnotations &&
            BreakStringLiterals == R.BreakStringLiterals &&
            ColumnLimit == R.ColumnLimit && CommentPragmas == R.CommentPragmas &&

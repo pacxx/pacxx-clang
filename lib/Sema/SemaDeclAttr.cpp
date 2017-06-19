@@ -238,7 +238,7 @@ static typename std::enable_if<std::is_base_of<clang::Attr, AttrInfo>::value,
 getAttrName(const AttrInfo &Attr) {
   return &Attr;
 }
-const IdentifierInfo *getAttrName(const clang::AttributeList &Attr) {
+static const IdentifierInfo *getAttrName(const clang::AttributeList &Attr) {
   return Attr.getName();
 }
 
@@ -313,8 +313,8 @@ static bool checkAttrMutualExclusion(Sema &S, Decl *D, SourceRange Range,
 /// \returns true if IdxExpr is a valid index.
 template <typename AttrInfo>
 static bool checkFunctionOrMethodParameterIndex(
-    Sema &S, const Decl *D, const AttrInfo& Attr,
-    unsigned AttrArgNum, const Expr *IdxExpr, uint64_t &Idx) {
+    Sema &S, const Decl *D, const AttrInfo &Attr, unsigned AttrArgNum,
+    const Expr *IdxExpr, uint64_t &Idx, bool AllowImplicitThis = false) {
   assert(isFunctionOrMethodOrBlock(D));
 
   // In C++ the implicit 'this' function parameter also counts.
@@ -341,7 +341,7 @@ static bool checkFunctionOrMethodParameterIndex(
     return false;
   }
   Idx--; // Convert to zero-based.
-  if (HasImplicitThisParam) {
+  if (HasImplicitThisParam && !AllowImplicitThis) {
     if (Idx == 0) {
       S.Diag(getAttrLoc(Attr),
              diag::err_attribute_invalid_implicit_this_argument)
@@ -1038,7 +1038,7 @@ static void handleDiagnoseIfAttr(Sema &S, Decl *D, const AttributeList &Attr) {
   }
 
   bool ArgDependent = false;
-  if (auto *FD = dyn_cast<FunctionDecl>(D))
+  if (const auto *FD = dyn_cast<FunctionDecl>(D))
     ArgDependent = ArgumentDependenceChecker(FD).referencesArgs(Cond);
   D->addAttr(::new (S.Context) DiagnoseIfAttr(
       Attr.getRange(), S.Context, Cond, Msg, DiagType, ArgDependent, cast<NamedDecl>(D),
@@ -4604,14 +4604,16 @@ static void handleTypeTagForDatatypeAttr(Sema &S, Decl *D,
 static void handleXRayLogArgsAttr(Sema &S, Decl *D,
                                   const AttributeList &Attr) {
   uint64_t ArgCount;
+
   if (!checkFunctionOrMethodParameterIndex(S, D, Attr, 1, Attr.getArgAsExpr(0),
-                                           ArgCount))
+                                           ArgCount,
+                                           true /* AllowImplicitThis*/))
     return;
 
   // ArgCount isn't a parameter index [0;n), it's a count [1;n] - hence + 1.
   D->addAttr(::new (S.Context)
-             XRayLogArgsAttr(Attr.getRange(), S.Context, ++ArgCount,
-             Attr.getAttributeSpellingListIndex()));
+                 XRayLogArgsAttr(Attr.getRange(), S.Context, ++ArgCount,
+                                 Attr.getAttributeSpellingListIndex()));
 }
 
 //===----------------------------------------------------------------------===//
@@ -7335,6 +7337,12 @@ public:
   bool VisitMemberExpr(MemberExpr *ME) {
     DiagnoseDeclAvailability(ME->getMemberDecl(),
                              SourceRange(ME->getLocStart(), ME->getLocEnd()));
+    return true;
+  }
+
+  bool VisitObjCAvailabilityCheckExpr(ObjCAvailabilityCheckExpr *E) {
+    SemaRef.Diag(E->getLocStart(), diag::warn_at_available_unchecked_use)
+        << (!SemaRef.getLangOpts().ObjC1);
     return true;
   }
 

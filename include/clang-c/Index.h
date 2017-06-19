@@ -7,7 +7,7 @@
 |*                                                                            *|
 |*===----------------------------------------------------------------------===*|
 |*                                                                            *|
-|* This header provides a public inferface to a Clang library for extracting  *|
+|* This header provides a public interface to a Clang library for extracting  *|
 |* high-level symbol information from source files without exposing the full  *|
 |* Clang C++ API.                                                             *|
 |*                                                                            *|
@@ -32,7 +32,7 @@
  * compatible, thus CINDEX_VERSION_MAJOR is expected to remain stable.
  */
 #define CINDEX_VERSION_MAJOR 0
-#define CINDEX_VERSION_MINOR 40
+#define CINDEX_VERSION_MINOR 43
 
 #define CINDEX_VERSION_ENCODE(major, minor) ( \
       ((major) * 10000)                       \
@@ -1234,7 +1234,12 @@ enum CXTranslationUnit_Flags {
    * purposes of an IDE, this is undesirable behavior and as much information
    * as possible should be reported. Use this flag to enable this behavior.
    */
-  CXTranslationUnit_KeepGoing = 0x200
+  CXTranslationUnit_KeepGoing = 0x200,
+
+  /**
+   * \brief Sets the preprocessor in a mode for parsing a single file only.
+   */
+  CXTranslationUnit_SingleFileParse = 0x400
 };
 
 /**
@@ -1417,6 +1422,15 @@ enum CXSaveError {
 CINDEX_LINKAGE int clang_saveTranslationUnit(CXTranslationUnit TU,
                                              const char *FileName,
                                              unsigned options);
+
+/**
+ * \brief Suspend a translation unit in order to free memory associated with it.
+ *
+ * A suspended translation unit uses significantly less memory but on the other
+ * side does not support any other calls than \c clang_reparseTranslationUnit
+ * to resume it or \c clang_disposeTranslationUnit to dispose it completely.
+ */
+CINDEX_LINKAGE unsigned clang_suspendTranslationUnit(CXTranslationUnit);
 
 /**
  * \brief Destroy the specified CXTranslationUnit object.
@@ -3406,6 +3420,16 @@ CINDEX_LINKAGE unsigned clang_isVolatileQualifiedType(CXType T);
  * different level.
  */
 CINDEX_LINKAGE unsigned clang_isRestrictQualifiedType(CXType T);
+
+/**
+ * \brief Returns the address space of the given type.
+ */
+CINDEX_LINKAGE unsigned clang_getAddressSpace(CXType T);
+
+/**
+ * \brief Returns the typedef name of the given type.
+ */
+CINDEX_LINKAGE CXString clang_getTypedefName(CXType CT);
 
 /**
  * \brief For pointer types, returns the type of the pointee.

@@ -82,13 +82,25 @@ void ODRHash::AddDeclarationName(DeclarationName Name) {
 }
 
 void ODRHash::AddNestedNameSpecifier(const NestedNameSpecifier *NNS) {
-  assert(NNS && "Expecting non-null pointer.");
-  const auto *Prefix = NNS->getPrefix();
-  AddBoolean(Prefix);
-  if (Prefix) {
-    AddNestedNameSpecifier(Prefix);
+  // Unlike the other pointer handling functions, allow null pointers here.
+  if (!NNS) {
+    AddBoolean(false);
+    return;
   }
+
+  // Skip inlined namespaces.
   auto Kind = NNS->getKind();
+  if (Kind == NestedNameSpecifier::Namespace) {
+    if (NNS->getAsNamespace()->isInline()) {
+      return AddNestedNameSpecifier(NNS->getPrefix());
+    }
+  }
+
+  AddBoolean(true);
+
+  // Process prefix
+  AddNestedNameSpecifier(NNS->getPrefix());
+
   ID.AddInteger(Kind);
   switch (Kind) {
   case NestedNameSpecifier::Identifier:
@@ -110,8 +122,51 @@ void ODRHash::AddNestedNameSpecifier(const NestedNameSpecifier *NNS) {
   }
 }
 
-void ODRHash::AddTemplateName(TemplateName Name) {}
-void ODRHash::AddTemplateArgument(TemplateArgument TA) {}
+void ODRHash::AddTemplateName(TemplateName Name) {
+  auto Kind = Name.getKind();
+  ID.AddInteger(Kind);
+
+  switch (Kind) {
+  case TemplateName::Template:
+    AddDecl(Name.getAsTemplateDecl());
+    break;
+  // TODO: Support these cases.
+  case TemplateName::OverloadedTemplate:
+  case TemplateName::QualifiedTemplate:
+  case TemplateName::DependentTemplate:
+  case TemplateName::SubstTemplateTemplateParm:
+  case TemplateName::SubstTemplateTemplateParmPack:
+    break;
+  }
+}
+
+void ODRHash::AddTemplateArgument(TemplateArgument TA) {
+  const auto Kind = TA.getKind();
+  ID.AddInteger(Kind);
+
+  switch (Kind) {
+    case TemplateArgument::Null:
+    case TemplateArgument::Type:
+    case TemplateArgument::Declaration:
+    case TemplateArgument::NullPtr:
+    case TemplateArgument::Integral:
+      break;
+    case TemplateArgument::Template:
+    case TemplateArgument::TemplateExpansion:
+      AddTemplateName(TA.getAsTemplateOrTemplatePattern());
+      break;
+    case TemplateArgument::Expression:
+      AddStmt(TA.getAsExpr());
+      break;
+    case TemplateArgument::Pack:
+      ID.AddInteger(TA.pack_size());
+      for (auto SubTA : TA.pack_elements()) {
+        AddTemplateArgument(SubTA);
+      }
+      break;
+  }
+}
+
 void ODRHash::AddTemplateParameterList(const TemplateParameterList *TPL) {}
 
 void ODRHash::clear() {
@@ -195,6 +250,17 @@ public:
   void VisitValueDecl(const ValueDecl *D) {
     AddQualType(D->getType());
     Inherited::VisitValueDecl(D);
+  }
+
+  void VisitVarDecl(const VarDecl *D) {
+    Hash.AddBoolean(D->isStaticLocal());
+    Hash.AddBoolean(D->isConstexpr());
+    const bool HasInit = D->hasInit();
+    Hash.AddBoolean(HasInit);
+    if (HasInit) {
+      AddStmt(D->getInit());
+    }
+    Inherited::VisitVarDecl(D);
   }
 
   void VisitParmVarDecl(const ParmVarDecl *D) {
@@ -281,6 +347,7 @@ bool ODRHash::isWhitelistedDecl(const Decl *D, const CXXRecordDecl *Parent) {
     case Decl::StaticAssert:
     case Decl::TypeAlias:
     case Decl::Typedef:
+    case Decl::Var:
       return true;
   }
 }
@@ -364,10 +431,7 @@ public:
   }
 
   void AddNestedNameSpecifier(const NestedNameSpecifier *NNS) {
-    Hash.AddBoolean(NNS);
-    if (NNS) {
-      Hash.AddNestedNameSpecifier(NNS);
-    }
+    Hash.AddNestedNameSpecifier(NNS);
   }
 
   void AddIdentifierInfo(const IdentifierInfo *II) {
@@ -491,6 +555,22 @@ public:
     AddNestedNameSpecifier(T->getQualifier());
     AddQualType(T->getNamedType());
     VisitTypeWithKeyword(T);
+  }
+
+  void VisitTemplateSpecializationType(const TemplateSpecializationType *T) {
+    ID.AddInteger(T->getNumArgs());
+    for (const auto &TA : T->template_arguments()) {
+      Hash.AddTemplateArgument(TA);
+    }
+    Hash.AddTemplateName(T->getTemplateName());
+    VisitType(T);
+  }
+
+  void VisitTemplateTypeParmType(const TemplateTypeParmType *T) {
+    ID.AddInteger(T->getDepth());
+    ID.AddInteger(T->getIndex());
+    Hash.AddBoolean(T->isParameterPack());
+    AddDecl(T->getDecl());
   }
 };
 

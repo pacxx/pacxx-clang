@@ -23,14 +23,22 @@
 using namespace clang;
 using namespace sema;
 
-static bool lookupMember(Sema &S, const char *Name, CXXRecordDecl *RD,
-                         SourceLocation Loc) {
+static LookupResult lookupMember(Sema &S, const char *Name, CXXRecordDecl *RD,
+                                 SourceLocation Loc, bool &Res) {
   DeclarationName DN = S.PP.getIdentifierInfo(Name);
   LookupResult LR(S, DN, Loc, Sema::LookupMemberName);
   // Suppress diagnostics when a private member is selected. The same warnings
   // will be produced again when building the call.
   LR.suppressDiagnostics();
-  return S.LookupQualifiedName(LR, RD);
+  Res = S.LookupQualifiedName(LR, RD);
+  return LR;
+}
+
+static bool lookupMember(Sema &S, const char *Name, CXXRecordDecl *RD,
+                         SourceLocation Loc) {
+  bool Res;
+  lookupMember(S, Name, RD, Loc, Res);
+  return Res;
 }
 
 /// Look up the std::coroutine_traits<...>::promise_type for the given
@@ -120,8 +128,7 @@ static QualType lookupPromiseType(Sema &S, const FunctionProtoType *FnType,
   return PromiseType;
 }
 
-/// Look up the std::coroutine_traits<...>::promise_type for the given
-/// function type.
+/// Look up the std::experimental::coroutine_handle<PromiseType>.
 static QualType lookupCoroutineHandleType(Sema &S, QualType PromiseType,
                                           SourceLocation Loc) {
   if (PromiseType.isNull())
@@ -314,6 +321,7 @@ static ExprResult buildCoroutineHandle(Sema &S, QualType PromiseType,
 }
 
 struct ReadySuspendResumeResult {
+  enum AwaitCallType { ACT_Ready, ACT_Suspend, ACT_Resume };
   Expr *Results[3];
   OpaqueValueExpr *OpaqueValue;
   bool IsInvalid;
@@ -359,7 +367,44 @@ static ReadySuspendResumeResult buildCoawaitCalls(Sema &S, VarDecl *CoroPromise,
     Calls.Results[I] = Result.get();
   }
 
+  // Assume the calls are valid; all further checking should make them invalid.
   Calls.IsInvalid = false;
+
+  using ACT = ReadySuspendResumeResult::AwaitCallType;
+  CallExpr *AwaitReady = cast<CallExpr>(Calls.Results[ACT::ACT_Ready]);
+  if (!AwaitReady->getType()->isDependentType()) {
+    // [expr.await]p3 [...]
+    // — await-ready is the expression e.await_ready(), contextually converted
+    // to bool.
+    ExprResult Conv = S.PerformContextuallyConvertToBool(AwaitReady);
+    if (Conv.isInvalid()) {
+      S.Diag(AwaitReady->getDirectCallee()->getLocStart(),
+             diag::note_await_ready_no_bool_conversion);
+      S.Diag(Loc, diag::note_coroutine_promise_call_implicitly_required)
+          << AwaitReady->getDirectCallee() << E->getSourceRange();
+      Calls.IsInvalid = true;
+    }
+    Calls.Results[ACT::ACT_Ready] = Conv.get();
+  }
+  CallExpr *AwaitSuspend = cast<CallExpr>(Calls.Results[ACT::ACT_Suspend]);
+  if (!AwaitSuspend->getType()->isDependentType()) {
+    // [expr.await]p3 [...]
+    //   - await-suspend is the expression e.await_suspend(h), which shall be
+    //     a prvalue of type void or bool.
+    QualType RetType = AwaitSuspend->getCallReturnType(S.Context);
+    // non-class prvalues always have cv-unqualified types
+    QualType AdjRetType = RetType.getUnqualifiedType();
+    if (RetType->isReferenceType() ||
+        (AdjRetType != S.Context.BoolTy && AdjRetType != S.Context.VoidTy)) {
+      S.Diag(AwaitSuspend->getCalleeDecl()->getLocation(),
+             diag::err_await_suspend_invalid_return_type)
+          << RetType;
+      S.Diag(Loc, diag::note_coroutine_promise_call_implicitly_required)
+          << AwaitSuspend->getDirectCallee();
+      Calls.IsInvalid = true;
+    }
+  }
+
   return Calls;
 }
 
@@ -395,6 +440,7 @@ VarDecl *Sema::buildCoroutinePromise(SourceLocation Loc) {
   if (VD->isInvalidDecl())
     return nullptr;
   ActOnUninitializedDecl(VD);
+  FD->addDecl(VD);
   assert(!VD->isInvalidDecl());
   return VD;
 }
@@ -424,11 +470,11 @@ static FunctionScopeInfo *checkCoroutineContext(Sema &S, SourceLocation Loc,
   return ScopeInfo;
 }
 
-static bool actOnCoroutineBodyStart(Sema &S, Scope *SC, SourceLocation KWLoc,
-                                    StringRef Keyword) {
-  if (!checkCoroutineContext(S, KWLoc, Keyword))
+bool Sema::ActOnCoroutineBodyStart(Scope *SC, SourceLocation KWLoc,
+                                   StringRef Keyword) {
+  if (!checkCoroutineContext(*this, KWLoc, Keyword))
     return false;
-  auto *ScopeInfo = S.getCurFunction();
+  auto *ScopeInfo = getCurFunction();
   assert(ScopeInfo->CoroutinePromise);
 
   // If we have existing coroutine statements then we have already built
@@ -438,24 +484,24 @@ static bool actOnCoroutineBodyStart(Sema &S, Scope *SC, SourceLocation KWLoc,
 
   ScopeInfo->setNeedsCoroutineSuspends(false);
 
-  auto *Fn = cast<FunctionDecl>(S.CurContext);
+  auto *Fn = cast<FunctionDecl>(CurContext);
   SourceLocation Loc = Fn->getLocation();
   // Build the initial suspend point
   auto buildSuspends = [&](StringRef Name) mutable -> StmtResult {
     ExprResult Suspend =
-        buildPromiseCall(S, ScopeInfo->CoroutinePromise, Loc, Name, None);
+        buildPromiseCall(*this, ScopeInfo->CoroutinePromise, Loc, Name, None);
     if (Suspend.isInvalid())
       return StmtError();
-    Suspend = buildOperatorCoawaitCall(S, SC, Loc, Suspend.get());
+    Suspend = buildOperatorCoawaitCall(*this, SC, Loc, Suspend.get());
     if (Suspend.isInvalid())
       return StmtError();
-    Suspend = S.BuildResolvedCoawaitExpr(Loc, Suspend.get(),
-                                         /*IsImplicit*/ true);
-    Suspend = S.ActOnFinishFullExpr(Suspend.get());
+    Suspend = BuildResolvedCoawaitExpr(Loc, Suspend.get(),
+                                       /*IsImplicit*/ true);
+    Suspend = ActOnFinishFullExpr(Suspend.get());
     if (Suspend.isInvalid()) {
-      S.Diag(Loc, diag::note_coroutine_promise_suspend_implicitly_required)
+      Diag(Loc, diag::note_coroutine_promise_suspend_implicitly_required)
           << ((Name == "initial_suspend") ? 0 : 1);
-      S.Diag(KWLoc, diag::note_declared_coroutine_here) << Keyword;
+      Diag(KWLoc, diag::note_declared_coroutine_here) << Keyword;
       return StmtError();
     }
     return cast<Stmt>(Suspend.get());
@@ -475,7 +521,7 @@ static bool actOnCoroutineBodyStart(Sema &S, Scope *SC, SourceLocation KWLoc,
 }
 
 ExprResult Sema::ActOnCoawaitExpr(Scope *S, SourceLocation Loc, Expr *E) {
-  if (!actOnCoroutineBodyStart(*this, S, Loc, "co_await")) {
+  if (!ActOnCoroutineBodyStart(S, Loc, "co_await")) {
     CorrectDelayedTyposInExpr(E);
     return ExprError();
   }
@@ -567,7 +613,7 @@ ExprResult Sema::BuildResolvedCoawaitExpr(SourceLocation Loc, Expr *E,
 }
 
 ExprResult Sema::ActOnCoyieldExpr(Scope *S, SourceLocation Loc, Expr *E) {
-  if (!actOnCoroutineBodyStart(*this, S, Loc, "co_yield")) {
+  if (!ActOnCoroutineBodyStart(S, Loc, "co_yield")) {
     CorrectDelayedTyposInExpr(E);
     return ExprError();
   }
@@ -612,14 +658,15 @@ ExprResult Sema::BuildCoyieldExpr(SourceLocation Loc, Expr *E) {
   if (RSS.IsInvalid)
     return ExprError();
 
-  Expr *Res = new (Context) CoyieldExpr(Loc, E, RSS.Results[0], RSS.Results[1],
-                                        RSS.Results[2], RSS.OpaqueValue);
+  Expr *Res =
+      new (Context) CoyieldExpr(Loc, E, RSS.Results[0], RSS.Results[1],
+                                RSS.Results[2], RSS.OpaqueValue);
 
   return Res;
 }
 
 StmtResult Sema::ActOnCoreturnStmt(Scope *S, SourceLocation Loc, Expr *E) {
-  if (!actOnCoroutineBodyStart(*this, S, Loc, "co_return")) {
+  if (!ActOnCoroutineBodyStart(S, Loc, "co_return")) {
     CorrectDelayedTyposInExpr(E);
     return StmtError();
   }
@@ -720,17 +767,19 @@ static FunctionDecl *findDeleteForPromise(Sema &S, SourceLocation Loc,
 
 void Sema::CheckCompletedCoroutineBody(FunctionDecl *FD, Stmt *&Body) {
   FunctionScopeInfo *Fn = getCurFunction();
-  assert(Fn && Fn->CoroutinePromise && "not a coroutine");
-
+  assert(Fn && Fn->isCoroutine() && "not a coroutine");
   if (!Body) {
     assert(FD->isInvalidDecl() &&
            "a null body is only allowed for invalid declarations");
     return;
   }
+  // We have a function that uses coroutine keywords, but we failed to build
+  // the promise type.
+  if (!Fn->CoroutinePromise)
+    return FD->setInvalidDecl();
 
   if (isa<CoroutineBodyStmt>(Body)) {
-    // FIXME(EricWF): Nothing todo. the body is already a transformed coroutine
-    // body statement.
+    // Nothing todo. the body is already a transformed coroutine body statement.
     return;
   }
 
@@ -782,6 +831,12 @@ bool CoroutineStmtBuilder::buildDependentStatements() {
                   makeGroDeclAndReturnStmt() && makeReturnOnAllocFailure() &&
                   makeNewAndDeleteExpr();
   return this->IsValid;
+}
+
+bool CoroutineStmtBuilder::buildParameterMoves() {
+  assert(this->IsValid && "coroutine already invalid");
+  assert(this->ParamMoves.empty() && "param moves already built");
+  return this->IsValid = makeParamMoves();
 }
 
 bool CoroutineStmtBuilder::makePromiseStmt() {
@@ -860,9 +915,8 @@ bool CoroutineStmtBuilder::makeReturnOnAllocFailure() {
   StmtResult ReturnStmt =
       S.BuildReturnStmt(Loc, ReturnObjectOnAllocationFailure.get());
   if (ReturnStmt.isInvalid()) {
-    S.Diag(Found.getFoundDecl()->getLocation(),
-           diag::note_promise_member_declared_here)
-        << DN.getAsString();
+    S.Diag(Found.getFoundDecl()->getLocation(), diag::note_member_declared_here)
+        << DN;
     S.Diag(Fn.FirstCoroutineStmtLoc, diag::note_declared_coroutine_here)
         << Fn.getFirstCoroutineStmtKeyword();
     return false;
@@ -992,13 +1046,32 @@ bool CoroutineStmtBuilder::makeOnFallthrough() {
   // [dcl.fct.def.coroutine]/4
   // The unqualified-ids 'return_void' and 'return_value' are looked up in
   // the scope of class P. If both are found, the program is ill-formed.
-  const bool HasRVoid = lookupMember(S, "return_void", PromiseRecordDecl, Loc);
-  const bool HasRValue = lookupMember(S, "return_value", PromiseRecordDecl, Loc);
+  bool HasRVoid, HasRValue;
+  LookupResult LRVoid =
+      lookupMember(S, "return_void", PromiseRecordDecl, Loc, HasRVoid);
+  LookupResult LRValue =
+      lookupMember(S, "return_value", PromiseRecordDecl, Loc, HasRValue);
 
   StmtResult Fallthrough;
   if (HasRVoid && HasRValue) {
     // FIXME Improve this diagnostic
-    S.Diag(FD.getLocation(), diag::err_coroutine_promise_return_ill_formed)
+    S.Diag(FD.getLocation(),
+           diag::err_coroutine_promise_incompatible_return_functions)
+        << PromiseRecordDecl;
+    S.Diag(LRVoid.getRepresentativeDecl()->getLocation(),
+           diag::note_member_first_declared_here)
+        << LRVoid.getLookupName();
+    S.Diag(LRValue.getRepresentativeDecl()->getLocation(),
+           diag::note_member_first_declared_here)
+        << LRValue.getLookupName();
+    return false;
+  } else if (!HasRVoid && !HasRValue) {
+    // FIXME: The PDTS currently specifies this case as UB, not ill-formed.
+    // However we still diagnose this as an error since until the PDTS is fixed.
+    S.Diag(FD.getLocation(),
+           diag::err_coroutine_promise_requires_return_function)
+        << PromiseRecordDecl;
+    S.Diag(PromiseRecordDecl->getLocation(), diag::note_defined_here)
         << PromiseRecordDecl;
     return false;
   } else if (HasRVoid) {
@@ -1030,6 +1103,8 @@ bool CoroutineStmtBuilder::makeOnException() {
             : diag::
                   warn_coroutine_promise_unhandled_exception_required_with_exceptions;
     S.Diag(Loc, DiagID) << PromiseRecordDecl;
+    S.Diag(PromiseRecordDecl->getLocation(), diag::note_defined_here)
+        << PromiseRecordDecl;
     return !RequireUnhandledException;
   }
 
@@ -1071,8 +1146,8 @@ bool CoroutineStmtBuilder::makeReturnObject() {
 static void noteMemberDeclaredHere(Sema &S, Expr *E, FunctionScopeInfo &Fn) {
   if (auto *MbrRef = dyn_cast<CXXMemberCallExpr>(E)) {
     auto *MethodDecl = MbrRef->getMethodDecl();
-    S.Diag(MethodDecl->getLocation(), diag::note_promise_member_declared_here)
-        << MethodDecl->getName();
+    S.Diag(MethodDecl->getLocation(), diag::note_member_declared_here)
+        << MethodDecl;
   }
   S.Diag(Fn.FirstCoroutineStmtLoc, diag::note_declared_coroutine_here)
       << Fn.getFirstCoroutineStmtKeyword();
@@ -1160,8 +1235,63 @@ bool CoroutineStmtBuilder::makeGroDeclAndReturnStmt() {
   return true;
 }
 
+// Create a static_cast\<T&&>(expr).
+static Expr *castForMoving(Sema &S, Expr *E, QualType T = QualType()) {
+  if (T.isNull())
+    T = E->getType();
+  QualType TargetType = S.BuildReferenceType(
+      T, /*SpelledAsLValue*/ false, SourceLocation(), DeclarationName());
+  SourceLocation ExprLoc = E->getLocStart();
+  TypeSourceInfo *TargetLoc =
+      S.Context.getTrivialTypeSourceInfo(TargetType, ExprLoc);
+
+  return S
+      .BuildCXXNamedCast(ExprLoc, tok::kw_static_cast, TargetLoc, E,
+                         SourceRange(ExprLoc, ExprLoc), E->getSourceRange())
+      .get();
+}
+
+
+/// \brief Build a variable declaration for move parameter.
+static VarDecl *buildVarDecl(Sema &S, SourceLocation Loc, QualType Type,
+                             IdentifierInfo *II) {
+  TypeSourceInfo *TInfo = S.Context.getTrivialTypeSourceInfo(Type, Loc);
+  VarDecl *Decl =
+      VarDecl::Create(S.Context, S.CurContext, Loc, Loc, II, Type, TInfo, SC_None);
+  Decl->setImplicit();
+  return Decl;
+}
+
 bool CoroutineStmtBuilder::makeParamMoves() {
-  // FIXME: Perform move-initialization of parameters into frame-local copies.
+  for (auto *paramDecl : FD.parameters()) {
+    auto Ty = paramDecl->getType();
+    if (Ty->isDependentType())
+      continue;
+
+    // No need to copy scalars, llvm will take care of them.
+    if (Ty->getAsCXXRecordDecl()) {
+      ExprResult ParamRef =
+          S.BuildDeclRefExpr(paramDecl, paramDecl->getType(),
+                             ExprValueKind::VK_LValue, Loc); // FIXME: scope?
+      if (ParamRef.isInvalid())
+        return false;
+
+      Expr *RCast = castForMoving(S, ParamRef.get());
+
+      auto D = buildVarDecl(S, Loc, Ty, paramDecl->getIdentifier());
+      S.AddInitializerToDecl(D, RCast, /*DirectInit=*/true);
+
+      // Convert decl to a statement.
+      StmtResult Stmt = S.ActOnDeclStmt(S.ConvertDeclToDeclGroup(D), Loc, Loc);
+      if (Stmt.isInvalid())
+        return false;
+
+      ParamMovesVector.push_back(Stmt.get());
+    }
+  }
+
+  // Convert to ArrayRef in CtorArgs structure that builder inherits from.
+  ParamMoves = ParamMovesVector;
   return true;
 }
 

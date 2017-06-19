@@ -474,9 +474,8 @@ TEST_F(FormatTestJS, FormatsFreestandingFunctions) {
                "(function f() {\n"
                "  var x = 1;\n"
                "}());\n");
-  // Known issue: this should wrap after {}, but calculateBraceTypes
-  // misclassifies the first braces as a BK_BracedInit.
-  verifyFormat("function aFunction(){} {\n"
+  verifyFormat("function aFunction() {}\n"
+               "{\n"
                "  let x = 1;\n"
                "  console.log(x);\n"
                "}\n");
@@ -716,6 +715,11 @@ TEST_F(FormatTestJS, FunctionLiterals) {
                "  foo();\n"
                "  bar();\n"
                "}.bind(this));");
+
+  verifyFormat("SomeFunction((function() {\n"
+               "               foo();\n"
+               "               bar();\n"
+               "             }).bind(this));");
 
   // FIXME: This is bad, we should be wrapping before "function() {".
   verifyFormat("someFunction(function() {\n"
@@ -1222,12 +1226,22 @@ TEST_F(FormatTestJS, UnionIntersectionTypes) {
   verifyFormat("let x: Bar|Baz;");
   verifyFormat("let x: Bar<X>|Baz;");
   verifyFormat("let x: (Foo|Bar)[];");
+  verifyFormat("type X = {\n"
+               "  a: Foo|Bar;\n"
+               "};");
+  verifyFormat("export type X = {\n"
+               "  a: Foo|Bar;\n"
+               "};");
 }
 
 TEST_F(FormatTestJS, ClassDeclarations) {
   verifyFormat("class C {\n  x: string = 12;\n}");
   verifyFormat("class C {\n  x(): string => 12;\n}");
   verifyFormat("class C {\n  ['x' + 2]: string = 12;\n}");
+  verifyFormat("class C {\n"
+               "  foo() {}\n"
+               "  [bar]() {}\n"
+               "}\n");
   verifyFormat("class C {\n  private x: string = 12;\n}");
   verifyFormat("class C {\n  private static x: string = 12;\n}");
   verifyFormat("class C {\n  static x(): string {\n    return 'asd';\n  }\n}");
@@ -1859,6 +1873,45 @@ TEST_F(FormatTestJS, ImportComments) {
 TEST_F(FormatTestJS, Exponentiation) {
   verifyFormat("squared = x ** 2;");
   verifyFormat("squared **= 2;");
+}
+
+TEST_F(FormatTestJS, NestedLiterals) {
+  FormatStyle FourSpaces = getGoogleJSStyleWithColumns(15);
+  FourSpaces.IndentWidth = 4;
+  verifyFormat("var l = [\n"
+               "    [\n"
+               "        1,\n"
+               "    ],\n"
+               "];", FourSpaces);
+  verifyFormat("var l = [\n"
+               "    {\n"
+               "        1: 1,\n"
+               "    },\n"
+               "];", FourSpaces);
+  verifyFormat("someFunction(\n"
+               "    p1,\n"
+               "    [\n"
+               "        1,\n"
+               "    ],\n"
+               ");", FourSpaces);
+  verifyFormat("someFunction(\n"
+               "    p1,\n"
+               "    {\n"
+               "        1: 1,\n"
+               "    },\n"
+               ");", FourSpaces);
+  verifyFormat("var o = {\n"
+               "    1: 1,\n"
+               "    2: {\n"
+               "        3: 3,\n"
+               "    },\n"
+               "};", FourSpaces);
+  verifyFormat("var o = {\n"
+               "    1: 1,\n"
+               "    2: [\n"
+               "        3,\n"
+               "    ],\n"
+               "};", FourSpaces);
 }
 
 } // end namespace tooling

@@ -194,8 +194,6 @@ def warn_duplicate_declspec : Warning<"duplicate '%0' declaration specifier">,
   InGroup<DuplicateDeclSpecifier>;
 def ext_plain_complex : ExtWarn<
   "plain '_Complex' requires a type specifier; assuming '_Complex double'">;
-def ext_imaginary_constant : Extension<
-  "imaginary constants are a GNU extension">, InGroup<GNUImaginaryConstant>;
 def ext_integer_complex : Extension<
   "complex integer types are a GNU extension">, InGroup<GNUComplexInteger>;
 
@@ -539,10 +537,10 @@ def err_maybe_falloff_nonvoid_block : Error<
 def err_falloff_nonvoid_block : Error<
   "control reaches end of non-void block">;
 def warn_maybe_falloff_nonvoid_coroutine : Warning<
-  "control may reach end of non-void coroutine">,
+  "control may reach end of coroutine; which is undefined behavior because the promise type %0 does not declare 'return_void()'">,
   InGroup<ReturnType>;
 def warn_falloff_nonvoid_coroutine : Warning<
-  "control reaches end of non-void coroutine">,
+  "control reaches end of coroutine; which is undefined behavior because the promise type %0 does not declare 'return_void()'">,
   InGroup<ReturnType>;
 def warn_suggest_noreturn_function : Warning<
   "%select{function|method}0 %1 could be declared with attribute 'noreturn'">,
@@ -1556,11 +1554,9 @@ def note_ivar_decl : Note<"instance variable is declared here">;
 def note_bitfield_decl : Note<"bit-field is declared here">;
 def note_implicit_param_decl : Note<"%0 is an implicit parameter">;
 def note_member_synthesized_at : Note<
-  "implicit %select{default constructor|copy constructor|move constructor|copy "
-  "assignment operator|move assignment operator|destructor}0 for %1 first "
-  "required here">;
-def note_inhctor_synthesized_at : Note<
-  "inherited constructor for %0 first required here">;
+  "in implicit %select{default constructor|copy constructor|move constructor|"
+  "copy assignment operator|move assignment operator|destructor}0 for %1 "
+  "first required here">;
 def err_missing_default_ctor : Error<
   "%select{constructor for %1 must explicitly initialize the|"
   "implicit default constructor for %1 must explicitly initialize the|"
@@ -2771,7 +2767,7 @@ def warn_attribute_wrong_decl_type : Warning<
   "|types and namespaces"
   "|Objective-C interfaces"
   "|methods and properties"
-  "|functions, methods and properties"
+  "|functions, methods, and properties"
   "|struct or union"
   "|struct, union or class"
   "|types"
@@ -2886,6 +2882,10 @@ def warn_partial_message : Warning<"%0 is partial: %1">,
 def warn_partial_fwdclass_message : Warning<
     "%0 may be partial because the receiver type is unknown">,
     InGroup<UnguardedAvailability>, DefaultIgnore;
+def warn_at_available_unchecked_use : Warning<
+  "%select{@available|__builtin_available}0 does not guard availability here; "
+  "use if (%select{@available|__builtin_available}0) instead">,
+  InGroup<DiagGroup<"unsupported-availability-guard">>;
 
 // Thread Safety Attributes
 def warn_invalid_capability_name : Warning<
@@ -4584,7 +4584,7 @@ def warn_missing_prototype : Warning<
 def note_declaration_not_a_prototype : Note<
   "this declaration is not a prototype; add 'void' to make it a prototype for a zero-parameter function">; 
 def warn_strict_prototypes : Warning<
-  "this %select{function declaration is not|"
+  "this %select{function declaration is not|block declaration is not|"
   "old-style function definition is not preceded by}0 a prototype">,
   InGroup<DiagGroup<"strict-prototypes">>, DefaultIgnore;
 def warn_missing_variable_declarations : Warning<
@@ -5613,6 +5613,11 @@ def err_enumerator_does_not_exist : Error<
 def note_enum_specialized_here : Note<
   "enum %0 was explicitly specialized here">;
 
+def err_specialization_not_primary_template : Error<
+  "cannot reference member of primary template because deduced class "
+  "template specialization %0 is %select{instantiated from a partial|"
+  "an explicit}1 specialization">;
+
 def err_member_redeclared : Error<"class member cannot be redeclared">;
 def ext_member_redeclared : ExtWarn<"class member cannot be redeclared">,
   InGroup<RedeclaredClassMember>;
@@ -6301,6 +6306,8 @@ def warn_ambiguous_suitable_delete_function_found : Warning<
   InGroup<DiagGroup<"ambiguous-delete">>;
 def note_member_declared_here : Note<
   "member %0 declared here">;
+def note_member_first_declared_here : Note<
+  "member %0 first declared here">;
 def err_decrement_bool : Error<"cannot decrement expression of type bool">;
 def warn_increment_bool : Warning<
   "incrementing expression of type bool is deprecated and "
@@ -7266,7 +7273,7 @@ def err_invalid_conversion_between_vector_and_integer : Error<
   "invalid conversion between vector type %0 and integer type %1 "
   "of different size">;
 
-def err_opencl_function_pointer_variable : Error<
+def err_opencl_function_pointer : Error<
   "pointers to functions are not allowed">;
 
 def err_opencl_taking_function_address : Error<
@@ -8012,10 +8019,13 @@ def err_block_on_nonlocal : Error<
 def err_block_on_vm : Error<
   "__block attribute not allowed on declaration with a variably modified type">;
 
-def err_shufflevector_non_vector : Error<
-  "first two arguments to __builtin_shufflevector must be vectors">;
-def err_shufflevector_incompatible_vector : Error<
-  "first two arguments to __builtin_shufflevector must have the same type">;
+def err_vec_builtin_non_vector : Error<
+ "first two arguments to %0 must be vectors">;
+def err_vec_builtin_incompatible_vector : Error<
+  "first two arguments to %0 must have the same type">;
+def err_vsx_builtin_nonconstant_argument : Error<
+  "argument %0 to %1 must be a 2-bit unsigned literal (i.e. 0, 1, 2 or 3)">;
+
 def err_shufflevector_nonconstant_argument : Error<
   "index for __builtin_shufflevector must be a constant integer">;
 def err_shufflevector_argument_too_large : Error<
@@ -8307,8 +8317,13 @@ def err_opencl_bitfields : Error<
   "bit-fields are not supported in OpenCL">;
 def err_opencl_vla : Error<
   "variable length arrays are not supported in OpenCL">;
+def err_opencl_scalar_type_rank_greater_than_vector_type : Error<
+    "scalar operand type has greater rank than the type of the vector "
+    "element. (%0 and %1)">;
 def err_bad_kernel_param_type : Error<
   "%0 cannot be used as the type of a kernel parameter">;
+def err_opencl_implicit_function_decl : Error<
+  "implicit declaration of function %0 is invalid in OpenCL">;
 def err_record_with_pointers_kernel_param : Error<
   "%select{struct|union}0 kernel parameters may not contain pointers">;
 def note_within_field_of_type : Note<
@@ -8739,8 +8754,8 @@ def err_omp_not_mappable_type : Error<
   "type %0 is not mappable to target">;
 def err_omp_invalid_map_type_for_directive : Error<
   "%select{map type '%1' is not allowed|map type must be specified}0 for '#pragma omp %2'">;
-def err_omp_no_map_for_directive : Error<
-  "expected at least one map clause for '#pragma omp %0'">;
+def err_omp_no_clause_for_directive : Error<
+  "expected at least one %0 clause for '#pragma omp %1'">;
 def note_omp_polymorphic_in_target : Note<
   "mappable type cannot be polymorphic">;
 def note_omp_static_member_in_target : Note<
@@ -8902,8 +8917,6 @@ def note_equivalent_internal_linkage_decl : Note<
 
 def note_redefinition_modules_same_file : Note<
 	"'%0' included multiple times, additional include site in header from module '%1'">;
-def note_redefinition_modules_same_file_modulemap : Note<
-	"consider adding '%0' as part of '%1' definition">;
 def note_redefinition_include_same_file : Note<
 	"'%0' included multiple times, additional include site here">;
 }
@@ -8913,8 +8926,6 @@ def err_return_in_coroutine : Error<
   "return statement not allowed in coroutine; did you mean 'co_return'?">;
 def note_declared_coroutine_here : Note<
   "function is a coroutine due to use of '%0' here">;
-def note_promise_member_declared_here : Note<
-  "'%0' is declared here">;
 def err_coroutine_objc_method : Error<
   "Objective-C methods as coroutines are not yet supported">;
 def err_coroutine_unevaluated_context : Error<
@@ -8949,8 +8960,10 @@ def err_coroutine_promise_type_incomplete : Error<
 def err_coroutine_type_missing_specialization : Error<
   "this function cannot be a coroutine: missing definition of "
   "specialization %q0">;
-def err_coroutine_promise_return_ill_formed : Error<
-  "%0 declares both 'return_value' and 'return_void'">;
+def err_coroutine_promise_incompatible_return_functions : Error<
+  "the coroutine promise type %0 declares both 'return_value' and 'return_void'">;
+def err_coroutine_promise_requires_return_function : Error<
+  "the coroutine promise type %0 must declare either 'return_value' or 'return_void'">;
 def note_coroutine_promise_implicit_await_transform_required_here : Note<
   "call to 'await_transform' implicitly required by 'co_await' here">;
 def note_coroutine_promise_suspend_implicitly_required : Note<
@@ -8970,6 +8983,12 @@ def err_coroutine_promise_new_requires_nothrow : Error<
    "type declares 'get_return_object_on_allocation_failure()'">;
 def note_coroutine_promise_call_implicitly_required : Note<
   "call to %0 implicitly required by coroutine function here">;
+def err_await_suspend_invalid_return_type : Error<
+  "return type of 'await_suspend' is required to be 'void' or 'bool' (have %0)"
+>;
+def note_await_ready_no_bool_conversion : Note<
+  "return type of 'await_ready' is required to be contextually convertible to 'bool'"
+>;
 }
 
 let CategoryName = "Documentation Issue" in {

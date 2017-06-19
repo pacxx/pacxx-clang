@@ -1,4 +1,4 @@
- //===--- Targets.cpp - Implement target feature support -------------------===//
+//===--- Targets.cpp - Implement target feature support -------------------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -2624,6 +2624,7 @@ class X86TargetInfo : public TargetInfo {
   bool HasFMA = false;
   bool HasF16C = false;
   bool HasAVX512CD = false;
+  bool HasAVX512VPOPCNTDQ = false;
   bool HasAVX512ER = false;
   bool HasAVX512PF = false;
   bool HasAVX512DQ = false;
@@ -3122,6 +3123,7 @@ public:
     case CC_Swift:
     case CC_X86Pascal:
     case CC_IntelOclBicc:
+    case CC_OpenCLKernel:
       return CCCR_OK;
     default:
       return CCCR_Warning;
@@ -3504,9 +3506,9 @@ void X86TargetInfo::setSSELevel(llvm::StringMap<bool> &Features,
     LLVM_FALLTHROUGH;
   case AVX512F:
     Features["avx512f"] = Features["avx512cd"] = Features["avx512er"] =
-      Features["avx512pf"] = Features["avx512dq"] = Features["avx512bw"] =
-      Features["avx512vl"] = Features["avx512vbmi"] =
-      Features["avx512ifma"] = false;
+        Features["avx512pf"] = Features["avx512dq"] = Features["avx512bw"] =
+            Features["avx512vl"] = Features["avx512vbmi"] =
+                Features["avx512ifma"] = Features["avx512vpopcntdq"] = false;
   }
 }
 
@@ -3616,7 +3618,8 @@ void X86TargetInfo::setFeatureEnabledImpl(llvm::StringMap<bool> &Features,
     setSSELevel(Features, AVX512F, Enabled);
   } else if (Name == "avx512cd" || Name == "avx512er" || Name == "avx512pf" ||
              Name == "avx512dq" || Name == "avx512bw" || Name == "avx512vl" ||
-             Name == "avx512vbmi" || Name == "avx512ifma") {
+             Name == "avx512vbmi" || Name == "avx512ifma" ||
+             Name == "avx512vpopcntdq") {
     if (Enabled)
       setSSELevel(Features, AVX512F, Enabled);
     // Enable BWI instruction if VBMI is being enabled.
@@ -3700,6 +3703,8 @@ bool X86TargetInfo::handleTargetFeatures(std::vector<std::string> &Features,
       HasF16C = true;
     } else if (Feature == "+avx512cd") {
       HasAVX512CD = true;
+    } else if (Feature == "+avx512vpopcntdq") {
+      HasAVX512VPOPCNTDQ = true;
     } else if (Feature == "+avx512er") {
       HasAVX512ER = true;
     } else if (Feature == "+avx512pf") {
@@ -4037,6 +4042,8 @@ void X86TargetInfo::getTargetDefines(const LangOptions &Opts,
 
   if (HasAVX512CD)
     Builder.defineMacro("__AVX512CD__");
+  if (HasAVX512VPOPCNTDQ)
+    Builder.defineMacro("__AVX512VPOPCNTDQ__");
   if (HasAVX512ER)
     Builder.defineMacro("__AVX512ER__");
   if (HasAVX512PF)
@@ -4159,6 +4166,9 @@ void X86TargetInfo::getTargetDefines(const LangOptions &Opts,
   }
   if (CPU >= CK_i586)
     Builder.defineMacro("__GCC_HAVE_SYNC_COMPARE_AND_SWAP_8");
+
+  if (HasFloat128)
+    Builder.defineMacro("__SIZEOF_FLOAT128__", "16");
 }
 
 bool X86TargetInfo::hasFeature(StringRef Feature) const {
@@ -4168,6 +4178,7 @@ bool X86TargetInfo::hasFeature(StringRef Feature) const {
       .Case("avx2", SSELevel >= AVX2)
       .Case("avx512f", SSELevel >= AVX512F)
       .Case("avx512cd", HasAVX512CD)
+      .Case("avx512vpopcntdq", HasAVX512VPOPCNTDQ)
       .Case("avx512er", HasAVX512ER)
       .Case("avx512pf", HasAVX512PF)
       .Case("avx512dq", HasAVX512DQ)
@@ -4253,6 +4264,7 @@ bool X86TargetInfo::validateCpuSupports(StringRef FeatureStr) const {
       .Case("avx512bw", true)
       .Case("avx512dq", true)
       .Case("avx512cd", true)
+      .Case("avx512vpopcntdq", true)
       .Case("avx512er", true)
       .Case("avx512pf", true)
       .Case("avx512vbmi", true)
@@ -4636,7 +4648,9 @@ static void addMinGWDefines(const LangOptions &Opts, MacroBuilder &Builder) {
 class MinGWX86_32TargetInfo : public WindowsX86_32TargetInfo {
 public:
   MinGWX86_32TargetInfo(const llvm::Triple &Triple, const TargetOptions &Opts)
-      : WindowsX86_32TargetInfo(Triple, Opts) {}
+      : WindowsX86_32TargetInfo(Triple, Opts) {
+    HasFloat128 = true;
+  }
   void getTargetDefines(const LangOptions &Opts,
                         MacroBuilder &Builder) const override {
     WindowsX86_32TargetInfo::getTargetDefines(Opts, Builder);
@@ -4821,6 +4835,7 @@ public:
     case CC_PreserveMost:
     case CC_PreserveAll:
     case CC_X86RegCall:
+    case CC_OpenCLKernel:
       return CCCR_OK;
     default:
       return CCCR_Warning;
@@ -4894,6 +4909,7 @@ public:
     case CC_X86_64SysV:
     case CC_Swift:
     case CC_X86RegCall:
+    case CC_OpenCLKernel:
       return CCCR_OK;
     default:
       return CCCR_Warning;
@@ -4928,6 +4944,7 @@ public:
     // with x86 FP ops. Weird.
     LongDoubleWidth = LongDoubleAlign = 128;
     LongDoubleFormat = &llvm::APFloat::x87DoubleExtended();
+    HasFloat128 = true;
   }
 
   void getTargetDefines(const LangOptions &Opts,
@@ -5368,6 +5385,10 @@ public:
     // ARM has atomics up to 8 bytes
     setAtomic();
 
+    // Maximum alignment for ARM NEON data types should be 64-bits (AAPCS)
+    if (IsAAPCS && (Triple.getEnvironment() != llvm::Triple::Android))
+       MaxVectorAlign = 64;
+
     // Do force alignment of members that follow zero length bitfields.  If
     // the alignment of the zero-length bitfield is greater than the member
     // that follows it, `bar', `bar' will be aligned as the  type of the
@@ -5421,7 +5442,24 @@ public:
       if (Feature[0] == '+')
         Features[Feature.drop_front(1)] = true;
 
-    return TargetInfo::initFeatureMap(Features, Diags, CPU, FeaturesVec);
+    // Enable or disable thumb-mode explicitly per function to enable mixed
+    // ARM and Thumb code generation.
+    if (isThumb())
+      Features["thumb-mode"] = true;
+    else
+      Features["thumb-mode"] = false;
+
+    // Convert user-provided arm and thumb GNU target attributes to
+    // [-|+]thumb-mode target features respectively.
+    std::vector<std::string> UpdatedFeaturesVec(FeaturesVec);
+    for (auto &Feature : UpdatedFeaturesVec) {
+      if (Feature.compare("+arm") == 0)
+        Feature = "-thumb-mode";
+      else if (Feature.compare("+thumb") == 0)
+        Feature = "+thumb-mode";
+    }
+
+    return TargetInfo::initFeatureMap(Features, Diags, CPU, UpdatedFeaturesVec);
   }
 
   bool handleTargetFeatures(std::vector<std::string> &Features,
@@ -5846,6 +5884,7 @@ public:
     case CC_AAPCS:
     case CC_AAPCS_VFP:
     case CC_Swift:
+    case CC_OpenCLKernel:
       return CCCR_OK;
     default:
       return CCCR_Warning;
@@ -6005,6 +6044,7 @@ public:
     case CC_X86VectorCall:
       return CCCR_Ignore;
     case CC_C:
+    case CC_OpenCLKernel:
       return CCCR_OK;
     default:
       return CCCR_Warning;
@@ -6315,6 +6355,7 @@ public:
     case CC_Swift:
     case CC_PreserveMost:
     case CC_PreserveAll:
+    case CC_OpenCLKernel:
       return CCCR_OK;
     default:
       return CCCR_Warning;
@@ -7366,6 +7407,7 @@ public:
     switch (CC) {
     case CC_C:
     case CC_Swift:
+    case CC_OpenCLKernel:
       return CCCR_OK;
     default:
       return CCCR_Warning;
@@ -7649,6 +7691,15 @@ public:
   ArrayRef<TargetInfo::GCCRegAlias> getGCCRegAliases() const override {
     return None;
   }
+  CallingConvCheckResult checkCallingConvention(CallingConv CC) const override {
+    switch (CC) {
+      default:
+        return CCCR_Warning;
+      case CC_C:
+      case CC_OpenCLKernel:
+        return CCCR_OK;
+    }
+  }
 };
 
 class MipsTargetInfo : public TargetInfo {
@@ -7686,6 +7737,7 @@ class MipsTargetInfo : public TargetInfo {
     NoDSP, DSP1, DSP2
   } DspRev;
   bool HasMSA;
+  bool DisableMadd4;
 
 protected:
   bool HasFP64;
@@ -7696,7 +7748,7 @@ public:
       : TargetInfo(Triple), IsMips16(false), IsMicromips(false),
         IsNan2008(false), IsSingleFloat(false), IsNoABICalls(false),
         CanUseBSDABICalls(false), FloatABI(HardFloat), DspRev(NoDSP),
-        HasMSA(false), HasFP64(false) {
+        HasMSA(false), DisableMadd4(false), HasFP64(false) {
     TheCXXABI.set(TargetCXXABI::GenericMIPS);
 
     setABI((getTriple().getArch() == llvm::Triple::mips ||
@@ -7942,6 +7994,9 @@ public:
     if (HasMSA)
       Builder.defineMacro("__mips_msa", Twine(1));
 
+    if (DisableMadd4)
+      Builder.defineMacro("__mips_no_madd4", Twine(1));
+
     Builder.defineMacro("_MIPS_SZPTR", Twine(getPointerWidth(0)));
     Builder.defineMacro("_MIPS_SZINT", Twine(getIntWidth()));
     Builder.defineMacro("_MIPS_SZLONG", Twine(getLongWidth()));
@@ -8104,6 +8159,8 @@ public:
         DspRev = std::max(DspRev, DSP2);
       else if (Feature == "+msa")
         HasMSA = true;
+      else if (Feature == "+nomadd4")
+        DisableMadd4 = true;
       else if (Feature == "+fp64")
         HasFP64 = true;
       else if (Feature == "-fp64")
@@ -8436,7 +8493,7 @@ public:
   explicit WebAssembly32TargetInfo(const llvm::Triple &T,
                                    const TargetOptions &Opts)
       : WebAssemblyTargetInfo(T, Opts) {
-    MaxAtomicPromoteWidth = MaxAtomicInlineWidth = 32;
+    MaxAtomicPromoteWidth = MaxAtomicInlineWidth = 64;
     resetDataLayout("e-m:e-p:32:32-i64:64-n32:64-S128");
   }
 

@@ -15,6 +15,7 @@
 #include "CodeGenFunction.h"
 #include "llvm/ADT/ScopeExit.h"
 #include "clang/AST/StmtCXX.h"
+#include "clang/AST/StmtVisitor.h"
 
 using namespace clang;
 using namespace CodeGen;
@@ -147,24 +148,17 @@ static SmallString<32> buildSuspendPrefixStr(CGCoroData &Coro, AwaitKind Kind) {
 //
 //  See llvm's docs/Coroutines.rst for more details.
 //
-static RValue emitSuspendExpression(CodeGenFunction &CGF, CGCoroData &Coro,
+namespace {
+  struct LValueOrRValue {
+    LValue LV;
+    RValue RV;
+  };
+}
+static LValueOrRValue emitSuspendExpression(CodeGenFunction &CGF, CGCoroData &Coro,
                                     CoroutineSuspendExpr const &S,
                                     AwaitKind Kind, AggValueSlot aggSlot,
-                                    bool ignoreResult) {
+                                    bool ignoreResult, bool forLValue) {
   auto *E = S.getCommonExpr();
-
-  // FIXME: rsmith 5/22/2017. Does it still make sense for us to have a 
-  // UO_Coawait at all? As I recall, the only purpose it ever had was to
-  // represent a dependent co_await expression that couldn't yet be resolved to
-  // a CoawaitExpr. But now we have (and need!) a separate DependentCoawaitExpr
-  // node to store unqualified lookup results, it seems that the UnaryOperator
-  // portion of the representation serves no purpose (and as seen in this patch,
-  // it's getting in the way). Can we remove it?
-
-  // Skip passthrough operator co_await (present when awaiting on an LValue).
-  if (auto *UO = dyn_cast<UnaryOperator>(E))
-    if (UO->getOpcode() == UO_Coawait)
-      E = UO->getSubExpr();
 
   auto Binder =
       CodeGenFunction::OpaqueValueMappingData::bind(CGF, S.getOpaqueValue(), E);
@@ -216,7 +210,12 @@ static RValue emitSuspendExpression(CodeGenFunction &CGF, CGCoroData &Coro,
 
   // Emit await_resume expression.
   CGF.EmitBlock(ReadyBlock);
-  return CGF.EmitAnyExpr(S.getResumeExpr(), aggSlot, ignoreResult);
+  LValueOrRValue Res;
+  if (forLValue)
+    Res.LV = CGF.EmitLValue(S.getResumeExpr());
+  else
+    Res.RV = CGF.EmitAnyExpr(S.getResumeExpr(), aggSlot, ignoreResult);
+  return Res;
 }
 
 RValue CodeGenFunction::EmitCoawaitExpr(const CoawaitExpr &E,
@@ -224,13 +223,13 @@ RValue CodeGenFunction::EmitCoawaitExpr(const CoawaitExpr &E,
                                         bool ignoreResult) {
   return emitSuspendExpression(*this, *CurCoro.Data, E,
                                CurCoro.Data->CurrentAwaitKind, aggSlot,
-                               ignoreResult);
+                               ignoreResult, /*forLValue*/false).RV;
 }
 RValue CodeGenFunction::EmitCoyieldExpr(const CoyieldExpr &E,
                                         AggValueSlot aggSlot,
                                         bool ignoreResult) {
   return emitSuspendExpression(*this, *CurCoro.Data, E, AwaitKind::Yield,
-                               aggSlot, ignoreResult);
+                               aggSlot, ignoreResult, /*forLValue*/false).RV;
 }
 
 void CodeGenFunction::EmitCoreturnStmt(CoreturnStmt const &S) {
@@ -239,7 +238,99 @@ void CodeGenFunction::EmitCoreturnStmt(CoreturnStmt const &S) {
   EmitBranchThroughCleanup(CurCoro.Data->FinalJD);
 }
 
-// For WinEH exception representation backend need to know what funclet coro.end
+
+#ifndef NDEBUG
+static QualType getCoroutineSuspendExprReturnType(const ASTContext &Ctx,
+  const CoroutineSuspendExpr *E) {
+  const auto *RE = E->getResumeExpr();
+  // Is it possible for RE to be a CXXBindTemporaryExpr wrapping
+  // a MemberCallExpr?
+  assert(isa<CallExpr>(RE) && "unexpected suspend expression type");
+  return cast<CallExpr>(RE)->getCallReturnType(Ctx);
+}
+#endif
+
+LValue
+CodeGenFunction::EmitCoawaitLValue(const CoawaitExpr *E) {
+  assert(getCoroutineSuspendExprReturnType(getContext(), E)->isReferenceType() &&
+         "Can't have a scalar return unless the return type is a "
+         "reference type!");
+  return emitSuspendExpression(*this, *CurCoro.Data, *E,
+                               CurCoro.Data->CurrentAwaitKind, AggValueSlot::ignored(),
+                               /*ignoreResult*/false, /*forLValue*/true).LV;
+}
+
+LValue
+CodeGenFunction::EmitCoyieldLValue(const CoyieldExpr *E) {
+  assert(getCoroutineSuspendExprReturnType(getContext(), E)->isReferenceType() &&
+         "Can't have a scalar return unless the return type is a "
+         "reference type!");
+  return emitSuspendExpression(*this, *CurCoro.Data, *E,
+                               AwaitKind::Yield, AggValueSlot::ignored(),
+                               /*ignoreResult*/false, /*forLValue*/true).LV;
+}
+
+// Hunts for the parameter reference in the parameter copy/move declaration.
+namespace {
+struct GetParamRef : public StmtVisitor<GetParamRef> {
+public:
+  DeclRefExpr *Expr = nullptr;
+  GetParamRef() {}
+  void VisitDeclRefExpr(DeclRefExpr *E) {
+    assert(Expr == nullptr && "multilple declref in param move");
+    Expr = E;
+  }
+  void VisitStmt(Stmt *S) {
+    for (auto *C : S->children()) {
+      if (C)
+        Visit(C);
+    }
+  }
+};
+}
+
+// This class replaces references to parameters to their copies by changing
+// the addresses in CGF.LocalDeclMap and restoring back the original values in
+// its destructor.
+
+namespace {
+  struct ParamReferenceReplacerRAII {
+    CodeGenFunction::DeclMapTy SavedLocals;
+    CodeGenFunction::DeclMapTy& LocalDeclMap;
+
+    ParamReferenceReplacerRAII(CodeGenFunction::DeclMapTy &LocalDeclMap)
+        : LocalDeclMap(LocalDeclMap) {}
+
+    void addCopy(DeclStmt const *PM) {
+      // Figure out what param it refers to.
+
+      assert(PM->isSingleDecl());
+      VarDecl const*VD = static_cast<VarDecl const*>(PM->getSingleDecl());
+      Expr const *InitExpr = VD->getInit();
+      GetParamRef Visitor;
+      Visitor.Visit(const_cast<Expr*>(InitExpr));
+      assert(Visitor.Expr);
+      auto *DREOrig = cast<DeclRefExpr>(Visitor.Expr);
+      auto *PD = DREOrig->getDecl();
+
+      auto it = LocalDeclMap.find(PD);
+      assert(it != LocalDeclMap.end() && "parameter is not found");
+      SavedLocals.insert({ PD, it->second });
+
+      auto copyIt = LocalDeclMap.find(VD);
+      assert(copyIt != LocalDeclMap.end() && "parameter copy is not found");
+      it->second = copyIt->getSecond();
+    }
+
+    ~ParamReferenceReplacerRAII() {
+      for (auto&& SavedLocal : SavedLocals) {
+        LocalDeclMap.insert({SavedLocal.first, SavedLocal.second});
+      }
+    }
+  };
+}
+
+// For WinEH exception representation backend needs to know what funclet coro.end
 // belongs to. That information is passed in a funclet bundle.
 static SmallVector<llvm::OperandBundleDef, 1>
 getBundlesForCoroEnd(CodeGenFunction &CGF) {
@@ -462,21 +553,38 @@ void CodeGenFunction::EmitCoroutineBody(const CoroutineBodyStmt &S) {
 
   CurCoro.Data->CleanupJD = getJumpDestInCurrentScope(RetBB);
   {
+    ParamReferenceReplacerRAII ParamReplacer(LocalDeclMap);
     CodeGenFunction::RunCleanupsScope ResumeScope(*this);
     EHStack.pushCleanup<CallCoroDelete>(NormalAndEHCleanup, S.getDeallocate());
 
+    // Create parameter copies. We do it before creating a promise, since an
+    // evolution of coroutine TS may allow promise constructor to observe
+    // parameter copies.
+    for (auto *PM : S.getParamMoves()) {
+      EmitStmt(PM);
+      ParamReplacer.addCopy(cast<DeclStmt>(PM));
+      // TODO: if(CoroParam(...)) need to surround ctor and dtor
+      // for the copy, so that llvm can elide it if the copy is
+      // not needed.
+    }
+
     EmitStmt(S.getPromiseDeclStmt());
+
+    Address PromiseAddr = GetAddrOfLocalVar(S.getPromiseDecl());
+    auto *PromiseAddrVoidPtr =
+        new llvm::BitCastInst(PromiseAddr.getPointer(), VoidPtrTy, "", CoroId);
+    // Update CoroId to refer to the promise. We could not do it earlier because
+    // promise local variable was not emitted yet.
+    CoroId->setArgOperand(1, PromiseAddrVoidPtr);
 
     // Now we have the promise, initialize the GRO
     GroManager.EmitGroInit();
+
     EHStack.pushCleanup<CallCoroEnd>(EHCleanup);
-
-    CurCoro.Data->FinalJD = getJumpDestInCurrentScope(FinalBB);
-
-    // FIXME: Emit param moves.
 
     CurCoro.Data->CurrentAwaitKind = AwaitKind::Init;
     EmitStmt(S.getInitSuspendStmt());
+    CurCoro.Data->FinalJD = getJumpDestInCurrentScope(FinalBB);
 
     CurCoro.Data->CurrentAwaitKind = AwaitKind::Normal;
 
@@ -500,8 +608,7 @@ void CodeGenFunction::EmitCoroutineBody(const CoroutineBodyStmt &S) {
       EmitBlock(FinalBB);
       CurCoro.Data->CurrentAwaitKind = AwaitKind::Final;
       EmitStmt(S.getFinalSuspendStmt());
-    }
-    else {
+    } else {
       // We don't need FinalBB. Emit it to make sure the block is deleted.
       EmitBlock(FinalBB, /*IsFinished=*/true);
     }
@@ -548,6 +655,7 @@ RValue CodeGenFunction::EmitCoroutineIntrinsic(const CallExpr *E,
     CGM.Error(E->getLocStart(), "this builtin expect that __builtin_coro_id has"
                                 " been used earlier in this function");
     // Fallthrough to the next case to add TokenNone as the first argument.
+    LLVM_FALLTHROUGH;
   }
   // @llvm.coro.suspend takes a token parameter. Add token 'none' as the first
   // argument.
@@ -577,5 +685,6 @@ RValue CodeGenFunction::EmitCoroutineIntrinsic(const CallExpr *E,
     // deletion of the coroutine frame.
     if (CurCoro.Data)
       CurCoro.Data->LastCoroFree = Call;
-  }  return RValue::get(Call);
+  }
+  return RValue::get(Call);
 }

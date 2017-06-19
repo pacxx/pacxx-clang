@@ -9173,5 +9173,7 @@ def err_pacxx_lambda_capture_by_ref : Error<
 def err_pacxx_default_lambda_capture_by_ref : Error<
   "a lambda used in a PACXX kernel is not allowed to use capture by reference ([&]) as default capture mode">;
 def note_pacxx_capture_by_ref : Note<"captured variable declared here">;
+def err_pacxx_lambda_uses_non_const_global_var : Error<
+  "using a non-const global value is not allowed inside a PACXX kernel: %0">;
 
 } // end of sema component.

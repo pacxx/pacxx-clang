@@ -5516,18 +5516,45 @@ Sema::BuildResolvedCallExpr(Expr *Fn, NamedDecl *NDecl,
       // Check for invalid captures used in a PACXX kernel lambda expr
       if (RDecl && RDecl->isLambda()){
         if (RDecl->getLambdaCaptureDefault() == LambdaCaptureDefault::LCD_ByRef) {
-          auto ret = Diag(LParenLoc, diag::err_pacxx_default_lambda_capture_by_ref) << Fn->getSourceRange();
-          return ExprError(ret);
+          return ExprError(Diag(RDecl->getSourceRange().getBegin(),
+                                diag::err_pacxx_default_lambda_capture_by_ref) << RDecl->getSourceRange());
         }
         for (auto& cap : RDecl->captures()) {
           if (cap.getCaptureKind() == LambdaCaptureKind::LCK_ByRef) {
-            auto ret = Diag(LParenLoc, diag::err_pacxx_lambda_capture_by_ref)
-                << cap.getCapturedVar() << Fn->getSourceRange();
-            Diag(cap.getCapturedVar()->getSourceRange().getBegin(), diag::note_pacxx_capture_by_ref);
+            auto ret = Diag(cap.getLocation(), diag::err_pacxx_lambda_capture_by_ref)
+                << cap.getCapturedVar() << RDecl->getSourceRange();
             return ExprError(ret);
           }
         }
-        RDecl->dumpColor();
+
+        auto CheckAccessGlobals = [this, &LParenLoc](CXXMethodDecl* CallOp) {
+          struct CheckAccessGlobals : public RecursiveASTVisitor<CheckAccessGlobals> {
+          private:
+            Sema* S;
+            const SourceLocation& Loc;
+          public:
+            bool hasErrors;
+            CheckAccessGlobals(Sema* S, const SourceLocation& Loc) : S(S), Loc(Loc), hasErrors(false){}
+            bool VisitDeclRefExpr(DeclRefExpr *expr) {
+              if (auto Decl = dyn_cast<VarDecl>(expr->getDecl())) {
+                if (Decl->hasGlobalStorage() && !Decl->getType().isConstQualified()) {
+                  S->Diag(expr->getSourceRange().getBegin(),
+                          diag::err_pacxx_lambda_uses_non_const_global_var)
+                          << Decl->getName() << expr->getSourceRange();
+                  hasErrors = true;
+                }
+              }
+              return true;
+            }
+
+          } visitor(this, LParenLoc);
+
+          visitor.TraverseDecl(CallOp);
+          return visitor.hasErrors;
+        };
+
+        if (CheckAccessGlobals(RDecl->getLambdaCallOperator()))
+          return ExprError();
       }
     }
   }

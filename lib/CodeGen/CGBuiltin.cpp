@@ -2808,6 +2808,8 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
     return RValue::get(Builder.CreateCall(F, {Arg0Val, Arg1}));
   }
   case Builtin::BI__pacxx_barrier:
+  case Builtin::BI__pacxx_offload:
+  case Builtin::BI__pacxx_synchronize:
   case Builtin::BI__pacxx_read_ntid_x:
   case Builtin::BI__pacxx_read_ntid_y:
   case Builtin::BI__pacxx_read_ntid_z:
@@ -2830,6 +2832,14 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
       // PACXX MOD: pacxx specific builtins
     case Builtin::BI__pacxx_barrier: {
       IntrinsicId = llvm::Intrinsic::pacxx_barrier0;
+      break;
+    }
+    case Builtin::BI__pacxx_offload: {
+      IntrinsicId = llvm::Intrinsic::pacxx_offload;
+      break;
+    }
+    case Builtin::BI__pacxx_synchronize: {
+      IntrinsicId = llvm::Intrinsic::pacxx_synchronize;
       break;
     }
     case Builtin::BI__pacxx_read_ntid_x: {

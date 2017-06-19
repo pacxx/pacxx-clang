@@ -5908,6 +5908,15 @@ static void handlePACXXTargetAttr(Sema &S, Decl *D,
                                                      Attr.getAttributeSpellingListIndex()));
 }
 
+static void handlePACXXKernelAttr(Sema &S, Decl *D,
+                                  const AttributeList &Attr) {
+
+
+  D->addAttr(::new (S.Context) PACXXKernelAttr(Attr.getRange(),
+                                               S.Context,
+                                               Attr.getAttributeSpellingListIndex()));
+}
+
 //===----------------------------------------------------------------------===//
 // Top Level Sema Entry Points
 //===----------------------------------------------------------------------===//
@@ -6535,7 +6544,7 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
     break;
   // PACXX attributes.
   case AttributeList::AT_PACXXKernel:
-    handleSimpleAttribute<PACXXKernelAttr>(S, D, Attr);
+    handlePACXXKernelAttr(S, D, Attr);
     break;
   case AttributeList::AT_PACXXShared:
     handleSimpleAttribute<PACXXSharedAttr>(S, D, Attr);
@@ -6547,8 +6556,8 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
     handleSimpleAttribute<PACXXReflectionAttr>(S, D, Attr);
     break;
   case AttributeList::AT_PACXXDump:
-        handleSimpleAttribute<PACXXDumpAttr>(S, D, Attr);
-        break;
+    handleSimpleAttribute<PACXXDumpAttr>(S, D, Attr);
+    break;
   case AttributeList::AT_PACXXTarget:
     handlePACXXTargetAttr(S, D, Attr);
     break;

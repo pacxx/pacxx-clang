@@ -5516,6 +5516,30 @@ Sema::BuildResolvedCallExpr(Expr *Fn, NamedDecl *NDecl,
     }
   }
 
+  if (getLangOpts().PACXX) {
+    if (FDecl && FDecl->hasAttr<PACXXKernelAttr>()) {
+      //FDecl->dump();
+      auto QTy = FDecl->getTemplateSpecializationArgs()->get(0).getAsType();
+     // QTy->getAsCXXRecordDecl()->dumpColor();
+
+      auto RDecl = QTy->getAsCXXRecordDecl();
+      if (RDecl && RDecl->isLambda()){
+        if (RDecl->getLambdaCaptureDefault() == LambdaCaptureDefault::LCD_ByRef) {
+          auto ret = Diag(LParenLoc, diag::err_pacxx_default_lambda_capture_by_ref) << Fn->getSourceRange();
+          return ExprError(ret);
+        }
+        for (auto& cap : RDecl->captures()) {
+          if (cap.getCaptureKind() == LambdaCaptureKind::LCK_ByRef) {
+            auto ret = Diag(LParenLoc, diag::err_pacxx_lambda_capture_by_ref)
+                << cap.getCapturedVar() << Fn->getSourceRange();
+            Diag(cap.getCapturedVar()->getSourceRange().getBegin(), diag::note_pacxx_capture_by_ref);
+            return ExprError(ret);
+          }
+        }
+      }
+    }
+  }
+
   // Check for a valid return type
   if (CheckCallReturnType(FuncT->getReturnType(), Fn->getLocStart(), TheCall,
                           FDecl))

@@ -5513,6 +5513,7 @@ Sema::BuildResolvedCallExpr(Expr *Fn, NamedDecl *NDecl,
      // QTy->getAsCXXRecordDecl()->dumpColor();
 
       auto RDecl = QTy->getAsCXXRecordDecl();
+      // Check for invalid captures used in a PACXX kernel lambda expr
       if (RDecl && RDecl->isLambda()){
         if (RDecl->getLambdaCaptureDefault() == LambdaCaptureDefault::LCD_ByRef) {
           auto ret = Diag(LParenLoc, diag::err_pacxx_default_lambda_capture_by_ref) << Fn->getSourceRange();
@@ -5526,6 +5527,7 @@ Sema::BuildResolvedCallExpr(Expr *Fn, NamedDecl *NDecl,
             return ExprError(ret);
           }
         }
+        RDecl->dumpColor();
       }
     }
   }

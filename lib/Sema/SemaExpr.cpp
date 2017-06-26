@@ -5386,6 +5386,50 @@ ExprResult Sema::ActOnConvertVectorExpr(Expr *E, ParsedType ParsedDestTy,
   return SemaConvertVectorExpr(E, TInfo, BuiltinLoc, RParenLoc);
 }
 
+namespace {
+auto ValidPACXXKernelLambda(CXXRecordDecl *RDecl, Sema &S) {
+  if (RDecl->getLambdaCaptureDefault() == LambdaCaptureDefault::LCD_ByRef) {
+    return ExprError(S.Diag(RDecl->getSourceRange().getBegin(),
+                            diag::err_pacxx_default_lambda_capture_by_ref) << RDecl->getSourceRange());
+  }
+  for (auto &cap : RDecl->captures()) {
+    if (cap.getCaptureKind() == LambdaCaptureKind::LCK_ByRef) {
+      return ExprError(S.Diag(cap.getLocation(), diag::err_pacxx_lambda_capture_by_ref)
+                           << cap.getCapturedVar() << RDecl->getSourceRange());
+    }
+  }
+
+  auto CheckAccessGlobals = [&](CXXMethodDecl *CallOp) {
+    struct CheckAccessGlobals : public RecursiveASTVisitor<CheckAccessGlobals> {
+    private:
+      Sema &S;
+    public:
+      bool hasErrors;
+      CheckAccessGlobals(Sema &S) : S(S), hasErrors(false) {}
+      bool VisitDeclRefExpr(DeclRefExpr *expr) {
+        if (auto Decl = dyn_cast<VarDecl>(expr->getDecl())) {
+          if (Decl->hasGlobalStorage() && !Decl->getType().isConstQualified()) {
+            S.Diag(expr->getSourceRange().getBegin(),
+                   diag::err_pacxx_lambda_uses_non_const_global_var)
+                << Decl->getName() << expr->getSourceRange();
+            hasErrors = true;
+          }
+        }
+        return true;
+      }
+
+    } visitor(S);
+
+    visitor.TraverseDecl(CallOp);
+    return visitor.hasErrors;
+  };
+
+  if (CheckAccessGlobals(RDecl->getLambdaCallOperator()))
+    return ExprError();
+  return ExprResult(false);
+}
+}
+
 /// BuildResolvedCallExpr - Build a call to a resolved expression,
 /// i.e. an expression not of \p OverloadTy.  The expression should
 /// unary-convert to an expression of function-pointer or
@@ -5508,53 +5552,15 @@ Sema::BuildResolvedCallExpr(Expr *Fn, NamedDecl *NDecl,
 
   if (getLangOpts().PACXX) {
     if (FDecl && FDecl->hasAttr<PACXXKernelAttr>()) {
-      //FDecl->dump();
+
       auto QTy = FDecl->getTemplateSpecializationArgs()->get(0).getAsType();
-     // QTy->getAsCXXRecordDecl()->dumpColor();
-
       auto RDecl = QTy->getAsCXXRecordDecl();
-      // Check for invalid captures used in a PACXX kernel lambda expr
+      // Check if the provided functor is a lambda
       if (RDecl && RDecl->isLambda()){
-        if (RDecl->getLambdaCaptureDefault() == LambdaCaptureDefault::LCD_ByRef) {
-          return ExprError(Diag(RDecl->getSourceRange().getBegin(),
-                                diag::err_pacxx_default_lambda_capture_by_ref) << RDecl->getSourceRange());
-        }
-        for (auto& cap : RDecl->captures()) {
-          if (cap.getCaptureKind() == LambdaCaptureKind::LCK_ByRef) {
-            auto ret = Diag(cap.getLocation(), diag::err_pacxx_lambda_capture_by_ref)
-                << cap.getCapturedVar() << RDecl->getSourceRange();
-            return ExprError(ret);
-          }
-        }
-
-        auto CheckAccessGlobals = [this, &LParenLoc](CXXMethodDecl* CallOp) {
-          struct CheckAccessGlobals : public RecursiveASTVisitor<CheckAccessGlobals> {
-          private:
-            Sema* S;
-            const SourceLocation& Loc;
-          public:
-            bool hasErrors;
-            CheckAccessGlobals(Sema* S, const SourceLocation& Loc) : S(S), Loc(Loc), hasErrors(false){}
-            bool VisitDeclRefExpr(DeclRefExpr *expr) {
-              if (auto Decl = dyn_cast<VarDecl>(expr->getDecl())) {
-                if (Decl->hasGlobalStorage() && !Decl->getType().isConstQualified()) {
-                  S->Diag(expr->getSourceRange().getBegin(),
-                          diag::err_pacxx_lambda_uses_non_const_global_var)
-                          << Decl->getName() << expr->getSourceRange();
-                  hasErrors = true;
-                }
-              }
-              return true;
-            }
-
-          } visitor(this, LParenLoc);
-
-          visitor.TraverseDecl(CallOp);
-          return visitor.hasErrors;
-        };
-
-        if (CheckAccessGlobals(RDecl->getLambdaCallOperator()))
-          return ExprError();
+        // validate that the lambda is suitable for PACXX
+        auto Result = ValidPACXXKernelLambda(RDecl, *this);
+        if (Result.isInvalid())
+          return Result;
       }
     }
   }

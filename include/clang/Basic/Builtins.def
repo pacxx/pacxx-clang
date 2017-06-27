@@ -1435,6 +1435,9 @@ BUILTIN(__pacxx_read_nctaid_w, "i", "nc")
 
 BUILTIN(__pacxx_barrier, "v", "nc")
 
+BUILTIN(__pacxx_offload, "v", "nc")
+BUILTIN(__pacxx_synchronize, "v", "nc")
+
 #undef BUILTIN
 #undef LIBBUILTIN
 #undef LANGBUILTIN

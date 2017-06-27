@@ -2605,7 +2605,17 @@ bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Res,
   }
 
   // enable PACXX for compilation
-  LangOpts.PACXX = Res.getFrontendOpts().PACXXCompilationMode;
+
+  if (Res.getFrontendOpts().PACXXCompilationMode) {
+    bool emits_llvm = Res.getFrontendOpts().ProgramAction == frontend::EmitBC
+                   || Res.getFrontendOpts().ProgramAction == frontend::EmitLLVM;
+    if (!emits_llvm) {
+      Diags.Report(diag::err_pacxx_unsupported_action);
+      Success = false;
+    }
+    else
+      LangOpts.PACXX = true;
+  }
 
 
 

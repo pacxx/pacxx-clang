@@ -291,4 +291,7 @@ def warn_drv_msvc_not_found : Warning<
   "unable to find a Visual Studio installation; "
   "try running Clang from a developer command prompt">,
   InGroup<DiagGroup<"msvc-not-found">>;
+
+def err_pacxx_unsupported_action : Error<
+  "PACXX compilation requires emitting of LLVM IR or bitcode (use -emit-llvm)">;
 }

@@ -5396,6 +5396,50 @@ ExprResult Sema::ActOnConvertVectorExpr(Expr *E, ParsedType ParsedDestTy,
   return SemaConvertVectorExpr(E, TInfo, BuiltinLoc, RParenLoc);
 }
 
+namespace {
+auto ValidPACXXKernelLambda(CXXRecordDecl *RDecl, Sema &S) {
+  if (RDecl->getLambdaCaptureDefault() == LambdaCaptureDefault::LCD_ByRef) {
+    return ExprError(S.Diag(RDecl->getSourceRange().getBegin(),
+                            diag::err_pacxx_default_lambda_capture_by_ref) << RDecl->getSourceRange());
+  }
+  for (auto &cap : RDecl->captures()) {
+    if (cap.getCaptureKind() == LambdaCaptureKind::LCK_ByRef) {
+      return ExprError(S.Diag(cap.getLocation(), diag::err_pacxx_lambda_capture_by_ref)
+                           << cap.getCapturedVar() << RDecl->getSourceRange());
+    }
+  }
+
+  auto CheckAccessGlobals = [&](CXXMethodDecl *CallOp) {
+    struct CheckAccessGlobals : public RecursiveASTVisitor<CheckAccessGlobals> {
+    private:
+      Sema &S;
+    public:
+      bool hasErrors;
+      CheckAccessGlobals(Sema &S) : S(S), hasErrors(false) {}
+      bool VisitDeclRefExpr(DeclRefExpr *expr) {
+        if (auto Decl = dyn_cast<VarDecl>(expr->getDecl())) {
+          if (Decl->hasGlobalStorage() && !Decl->getType().isConstQualified()) {
+            S.Diag(expr->getSourceRange().getBegin(),
+                   diag::err_pacxx_lambda_uses_non_const_global_var)
+                << Decl->getName() << expr->getSourceRange();
+            hasErrors = true;
+          }
+        }
+        return true;
+      }
+
+    } visitor(S);
+
+    visitor.TraverseDecl(CallOp);
+    return visitor.hasErrors;
+  };
+
+  if (CheckAccessGlobals(RDecl->getLambdaCallOperator()))
+    return ExprError();
+  return ExprResult(false);
+}
+}
+
 /// BuildResolvedCallExpr - Build a call to a resolved expression,
 /// i.e. an expression not of \p OverloadTy.  The expression should
 /// unary-convert to an expression of function-pointer or
@@ -5513,6 +5557,21 @@ Sema::BuildResolvedCallExpr(Expr *Fn, NamedDecl *NDecl,
       if (FDecl && FDecl->hasAttr<CUDAGlobalAttr>())
         return ExprError(Diag(LParenLoc, diag::err_global_call_not_config)
             << FDecl->getName() << Fn->getSourceRange());
+    }
+  }
+
+  if (getLangOpts().PACXX) {
+    if (FDecl && FDecl->hasAttr<PACXXKernelAttr>()) {
+
+      auto QTy = FDecl->getTemplateSpecializationArgs()->get(0).getAsType();
+      auto RDecl = QTy->getAsCXXRecordDecl();
+      // Check if the provided functor is a lambda
+      if (RDecl && RDecl->isLambda()){
+        // validate that the lambda is suitable for PACXX
+        auto Result = ValidPACXXKernelLambda(RDecl, *this);
+        if (Result.isInvalid())
+          return Result;
+      }
     }
   }
 

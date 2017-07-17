@@ -1069,6 +1069,8 @@ public:
   /// replaced.
   QualType getAddrSpaceQualType(QualType T, unsigned AddressSpace) const;
 
+  QualType getDeviceQualType(QualType T) const;
+
   /// \brief Apply Objective-C protocol qualifiers to the given type.
   /// \param allowOnPointerType specifies if we can apply protocol
   /// qualifiers on ObjCObjectPointerType. It can be set to true when

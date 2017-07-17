@@ -9156,5 +9156,15 @@ def err_pacxx_default_lambda_capture_by_ref : Error<
 def note_pacxx_capture_by_ref : Note<"captured variable declared here">;
 def err_pacxx_lambda_uses_non_const_global_var : Error<
   "using a non-const global value is not allowed inside a PACXX kernel: %0">;
+def warn_pacxx_device_memory_deref : Warning<
+  "dereferencing a pointer to device memory is potentially unsafe and inadvisable in host mode">;
+def warn_pacxx_device_memory_on_wrong_type : Warning<
+  "[[pacxx::device_memory]] is only viable on pointer types, the qualifier is ignored">;
+def err_pacxx_lambda_captures_unqual_pointer : Error<
+  "a lambda used in a PACXX kernel is not allowed to capture pointers not carrying the [[pacxx::device_memory]] qualifier: %0">;
+def err_pacxx_lambda_captures_object_with_unqual_pointer : Error<
+  "a lambda used in a PACXX kernel is not allowed to capture objects carrying pointers not qualified with [[pacxx::device_memory]] qualifier: %0">;
+def warn_pacxx_device_memory_dropped_due_assign : Warning<
+  "assigning a pointer qualified with [[pacxx::device_memory]] to an unqualified pointer variable drops the qualifier">;
 
 } // end of sema component.

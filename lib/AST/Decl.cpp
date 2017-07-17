@@ -2556,6 +2556,28 @@ Stmt *FunctionDecl::getBody(const FunctionDecl *&Definition) const {
 
 void FunctionDecl::setBody(Stmt *B) {
   Body = B;
+  // PACXX MOD: check the body for a return statement and
+  // propagate the device memory qualifier to the FunctionDecl's type
+  if (B) {
+    if (auto CS = dyn_cast<CompoundStmt>(B)) {
+      for (auto S : CS->body()) {
+        if (auto RS = dyn_cast<ReturnStmt>(S)) {
+          if (RS->getRetValue() && !RS->getRetValue()->getType().isNull()) {
+            if (RS->getRetValue()->getType().isDeviceType()) {
+              if (auto ProtoTy = dyn_cast<FunctionProtoType>(this->getType())) {
+                auto RT = ProtoTy->getReturnType();
+                auto newRT = getASTContext().getDeviceQualType(RT);
+                auto newProtoTy =
+                    getASTContext().getFunctionType(newRT, ProtoTy->getParamTypes(), ProtoTy->getExtProtoInfo());
+                this->setType(newProtoTy);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
   if (B)
     EndRangeLoc = B->getLocEnd();
 }

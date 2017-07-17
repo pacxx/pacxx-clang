@@ -6769,6 +6769,16 @@ static void HandleOpenCLAccessAttr(QualType &CurType, const AttributeList &Attr,
   }
 }
 
+static void HandlePACXXDeviceMemoryAttr(QualType &CurType, const AttributeList &Attr,
+                                        Sema &S) {
+  if (CurType->isPointerType())
+    CurType = S.Context.getDeviceQualType(CurType);
+  else
+    S.Diag(Attr.getLoc(), S.PDiag(diag::warn_pacxx_device_memory_on_wrong_type)
+                              << Attr.getRange());
+
+}
+
 static void processTypeAttrs(TypeProcessingState &state, QualType &type,
                              TypeAttrLocation TAL, AttributeList *attrs) {
   // Scan through and apply attributes to this type where it makes sense.  Some
@@ -6807,6 +6817,7 @@ static void processTypeAttrs(TypeProcessingState &state, QualType &type,
     // If this is an attribute we can handle, do so now,
     // otherwise, add it to the FnAttrs list for rechaining.
     switch (attr.getKind()) {
+
     default:
       // A C++11 attribute on a declarator chunk must appertain to a type.
       if (attr.isCXX11Attribute() && TAL == TAL_DeclChunk) {
@@ -6815,7 +6826,6 @@ static void processTypeAttrs(TypeProcessingState &state, QualType &type,
         attr.setUsedAsTypeAttr();
       }
       break;
-
     case AttributeList::UnknownAttribute:
       if (attr.isCXX11Attribute() && TAL == TAL_DeclChunk)
         state.getSema().Diag(attr.getLoc(),
@@ -6824,6 +6834,11 @@ static void processTypeAttrs(TypeProcessingState &state, QualType &type,
       break;
 
     case AttributeList::IgnoredAttribute:
+      break;
+
+    case AttributeList::AT_PACXXDeviceMemory:
+      HandlePACXXDeviceMemoryAttr(type, attr, state.getSema());
+      attr.setUsedAsTypeAttr();
       break;
 
     case AttributeList::AT_MayAlias:

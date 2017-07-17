@@ -4088,7 +4088,11 @@ QualType TreeTransform<Derived>::TransformType(QualType T) {
   if (!NewDI)
     return QualType();
 
-  return NewDI->getType();
+  QualType NewT = NewDI->getType();
+  if (T.isDeviceType())
+    NewT = getSema().Context.getDeviceQualType(NewT);
+
+  return NewT;
 }
 
 template<typename Derived>
@@ -4237,6 +4241,7 @@ QualType TreeTransform<Derived>::RebuildQualifiedType(QualType T,
         QualType Deduced = AutoTy->getDeducedType();
         Qualifiers Qs = Deduced.getQualifiers();
         Qs.removeObjCLifetime();
+
         Deduced =
             SemaRef.Context.getQualifiedType(Deduced.getUnqualifiedType(), Qs);
         T = SemaRef.Context.getAutoType(Deduced, AutoTy->getKeyword(),

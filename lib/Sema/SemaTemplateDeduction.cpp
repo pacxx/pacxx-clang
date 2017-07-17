@@ -4193,6 +4193,7 @@ Sema::DeduceAutoType(TypeSourceInfo *Type, Expr *&Init, QualType &Result,
 Sema::DeduceAutoResult
 Sema::DeduceAutoType(TypeLoc Type, Expr *&Init, QualType &Result,
                      Optional<unsigned> DependentDeductionDepth) {
+
   if (Init->getType()->isNonOverloadPlaceholderType()) {
     ExprResult NonPlaceholder = CheckPlaceholderExpr(Init);
     if (NonPlaceholder.isInvalid())
@@ -4312,6 +4313,10 @@ Sema::DeduceAutoType(TypeLoc Type, Expr *&Init, QualType &Result,
     if (DeducedType.isNull())
       return DAR_FailedAlreadyDiagnosed;
   }
+
+  // PACXX MOD: propagate device memory qualifier to deduced type
+  if (Init->getType().isDeviceType())
+    DeducedType = Context.getDeviceQualType(DeducedType);
 
   Result = SubstituteDeducedTypeTransform(*this, DeducedType).Apply(Type);
   if (Result.isNull())

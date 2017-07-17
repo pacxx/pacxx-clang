@@ -1705,6 +1705,9 @@ void Qualifiers::print(raw_ostream &OS, const PrintingPolicy& Policy,
 
   if (appendSpaceIfNonEmpty && addSpace)
     OS << ' ';
+
+  if (hasDeviceType())
+    OS << "[[pacxx::device_memory]]";
 }
 
 std::string QualType::getAsString(const PrintingPolicy &Policy) const {

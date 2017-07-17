@@ -2301,6 +2301,22 @@ ASTContext::getAddrSpaceQualType(QualType T, unsigned AddressSpace) const {
   return getExtQualType(TypeNode, Quals);
 }
 
+QualType
+ASTContext::getDeviceQualType(QualType T) const {
+  QualType CanT = getCanonicalType(T);
+  if (CanT.getQualifiers().hasDeviceType())
+    return T;
+
+  // If we are composing extended qualifiers together, merge together
+  // into one ExtQuals node.
+  QualifierCollector Quals;
+  const Type *TypeNode = Quals.strip(T);
+
+  Quals.addDeviceType();
+
+  return getExtQualType(TypeNode, Quals);
+}
+
 QualType ASTContext::getObjCGCQualType(QualType T,
                                        Qualifiers::GC GCAttr) const {
   QualType CanT = getCanonicalType(T);

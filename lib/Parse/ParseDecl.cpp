@@ -1557,13 +1557,18 @@ void Parser::ProhibitCXX11Attributes(ParsedAttributesWithRange &Attrs,
   for (AttributeList *Attr = Attrs.getList(); Attr; Attr = Attr->getNext()) {
     if (!Attr->isCXX11Attribute())
       continue;
-    if (Attr->getKind() == AttributeList::UnknownAttribute)
-      Diag(Attr->getLoc(), diag::warn_unknown_attribute_ignored)
-          << Attr->getName();
+    if (Attr->getKind() == AttributeList::AT_PACXXDeviceMemory) // PACXX MOD: Diag a better error message
+      Diag(Attr->getLoc(), diag::warn_pacxx_device_memory_on_wrong_type)
+          << Attr->getRange();
     else {
-      Diag(Attr->getLoc(), DiagID)
-        << Attr->getName();
-      Attr->setInvalid();
+      if (Attr->getKind() == AttributeList::UnknownAttribute)
+        Diag(Attr->getLoc(), diag::warn_unknown_attribute_ignored)
+            << Attr->getName();
+      else {
+        Diag(Attr->getLoc(), DiagID)
+            << Attr->getName();
+        Attr->setInvalid();
+      }
     }
   }
 }

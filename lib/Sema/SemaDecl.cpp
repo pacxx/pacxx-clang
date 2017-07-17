@@ -10576,6 +10576,12 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init, bool DirectInit) {
     VDecl->setInitStyle(VarDecl::ListInit);
   }
 
+  // PACXX MOD: Check if the Initializer has the pacxx::device_memory attribute
+  // propagate it to the new VarDecl
+  if (VDecl->getInit() && !VDecl->getInit()->getType().isNull()
+      && VDecl->getInit()->getType().isDeviceType())
+    VDecl->setType(VDecl->getInit()->getType());
+
   CheckCompleteVariableDeclaration(VDecl);
 }
 

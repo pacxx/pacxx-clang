@@ -1287,6 +1287,8 @@ static InputKind ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
   }
   Opts.DisableFree = Args.hasArg(OPT_disable_free);
 
+  Opts.PACXXCompilationMode = Args.hasArg(OPT_pacxx);
+
   Opts.OutputFile = Args.getLastArgValue(OPT_o);
   Opts.Plugins = Args.getAllArgValues(OPT_load);
   Opts.RelocatablePCH = Args.hasArg(OPT_relocatable_pch);

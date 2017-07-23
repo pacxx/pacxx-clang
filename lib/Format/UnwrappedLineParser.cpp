@@ -486,6 +486,8 @@ void UnwrappedLineParser::parseBlock(bool MustBeDeclaration, bool AddLevel,
     return;
   }
 
+  flushComments(isOnNewLine(*FormatTok));
+  Line->Level = InitialLevel;
   nextToken(); // Munch the closing brace.
 
   if (MacroBlock && FormatTok->is(tok::l_paren))
@@ -493,7 +495,6 @@ void UnwrappedLineParser::parseBlock(bool MustBeDeclaration, bool AddLevel,
 
   if (MunchSemi && FormatTok->Tok.is(tok::semi))
     nextToken();
-  Line->Level = InitialLevel;
   Line->MatchingOpeningBlockLineIndex = OpeningLineIndex;
   if (OpeningLineIndex != UnwrappedLine::kInvalidIndex) {
     // Update the opening line to add the forward reference as well
@@ -747,7 +748,7 @@ static bool mustBeJSIdent(const AdditionalKeywords &Keywords,
               Keywords.kw_let, Keywords.kw_var, tok::kw_const,
               Keywords.kw_abstract, Keywords.kw_extends, Keywords.kw_implements,
               Keywords.kw_instanceof, Keywords.kw_interface,
-              Keywords.kw_throws));
+              Keywords.kw_throws, Keywords.kw_from));
 }
 
 static bool mustBeJSIdentOrValue(const AdditionalKeywords &Keywords,

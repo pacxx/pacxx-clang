@@ -8200,7 +8200,8 @@ public:
       : TargetCodeGenInfo(new PACXXABIInfo(CGT)) {}
 
   void setTargetAttributes(const Decl *D, llvm::GlobalValue *GV,
-                           CodeGen::CodeGenModule &CGM) const override;
+                           CodeGen::CodeGenModule &CGM,
+                           ForDefinition_t IsForDefinition) const override;
 
 
 };
@@ -8246,7 +8247,7 @@ Address PACXXABIInfo::EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
 }
 
 void PACXXTargetCodeGenInfo::setTargetAttributes(const Decl *D, llvm::GlobalValue *GV,
-                           CodeGen::CodeGenModule &CGM) const {}
+                           CodeGen::CodeGenModule &CGM, ForDefinition_t IsForDefinition) const {}
 
 
 }

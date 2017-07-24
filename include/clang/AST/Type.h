@@ -154,8 +154,8 @@ public:
 
   enum {
     /// The maximum supported address space number.
-    /// 23 bits should be enough for anyone.
-    MaxAddressSpace = 0x7fffffu,
+    /// 22 bits should be enough for anyone.
+    MaxAddressSpace = 0x3fffffu,
 
     /// The width of the "fast" qualifier mask.
     FastWidth = 3,
@@ -283,6 +283,13 @@ public:
   }
   void removeUnaligned() { Mask &= ~UMask; }
   void addUnaligned() { Mask |= UMask; }
+
+  bool hasDeviceType() const { return Mask & DeviceTypeMask; }
+  void setDeviceTyped(bool flag) {
+    Mask = (Mask & ~DeviceTypeMask) | (flag ? DeviceTypeMask : 0);
+  }
+  void removeDeviceType() { Mask &= ~DeviceTypeMask; }
+  void addDeviceType() { Mask |= DeviceTypeMask; }
 
   bool hasObjCGCAttr() const { return Mask & GCAttrMask; }
   GC getObjCGCAttr() const { return GC((Mask & GCAttrMask) >> GCAttrShift); }
@@ -539,8 +546,8 @@ public:
 
 private:
 
-  // bits:     |0 1 2|3|4 .. 5|6  ..  8|9   ...   31|
-  //           |C R V|U|GCAttr|Lifetime|AddressSpace|
+  // bits:     |0 1 2|3|4 .. 5|6  ..  8|9|10  ...   31|
+  //           |C R V|U|GCAttr|Lifetime|D|AddressSpace|
   uint32_t Mask;
 
   static const uint32_t UMask = 0x8;
@@ -549,9 +556,11 @@ private:
   static const uint32_t GCAttrShift = 4;
   static const uint32_t LifetimeMask = 0x1C0;
   static const uint32_t LifetimeShift = 6;
+  static const uint32_t DeviceTypeMask = 0x200;
+  static const uint32_t DeviceTypeShift = 9;
   static const uint32_t AddressSpaceMask =
-      ~(CVRMask | UMask | GCAttrMask | LifetimeMask);
-  static const uint32_t AddressSpaceShift = 9;
+      ~(CVRMask | UMask | GCAttrMask | LifetimeMask | DeviceTypeMask);
+  static const uint32_t AddressSpaceShift = 10;
 };
 
 /// A std::pair-like structure for storing a qualified type split
@@ -738,6 +747,10 @@ public:
 
   /// \brief Retrieve the set of qualifiers applied to this type.
   Qualifiers getQualifiers() const;
+
+  bool isDeviceType() const {
+    return getQualifiers().hasDeviceType();
+  }
 
   /// \brief Retrieve the set of CVR (const-volatile-restrict) qualifiers
   /// local to this particular QualType instance, not including any qualifiers

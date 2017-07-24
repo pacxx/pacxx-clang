@@ -614,6 +614,9 @@ CXXReinterpretCastExpr::Create(const ASTContext &C, QualType T,
                                SourceLocation RParenLoc,
                                SourceRange AngleBrackets) {
   unsigned PathSize = (BasePath ? BasePath->size() : 0);
+  if (Op->getType().isDeviceType()) {
+    T = C.getDeviceQualType(T);
+  }
   void *Buffer = C.Allocate(totalSizeToAlloc<CXXBaseSpecifier *>(PathSize));
   CXXReinterpretCastExpr *E =
     new (Buffer) CXXReinterpretCastExpr(T, VK, K, Op, PathSize, WrittenTy, L,

@@ -1165,6 +1165,19 @@ CallExpr::CallExpr(const ASTContext &C, StmtClass SC, Expr *fn,
            fn->containsUnexpandedParameterPack()),
       NumArgs(args.size()) {
 
+  // PACXX MOD: propagate the device qualifier
+  // FIXME: move this out of the constructor to get the desired type from
+  // the users of CallExpr
+
+  if (auto ME = dyn_cast<MemberExpr>(fn)){
+    auto Ty = ME->getMemberDecl()->getType();
+    if (auto ProtoTy = dyn_cast<FunctionProtoType>(Ty)){
+      auto RT = ProtoTy->getReturnType();
+      if (RT.isDeviceType())
+        this->setType(RT);
+    }
+  }
+
   unsigned NumPreArgs = preargs.size();
   SubExprs = new (C) Stmt *[args.size()+PREARGS_START+NumPreArgs];
   SubExprs[FN] = fn;
@@ -1184,7 +1197,8 @@ CallExpr::CallExpr(const ASTContext &C, StmtClass SC, Expr *fn,
 CallExpr::CallExpr(const ASTContext &C, StmtClass SC, Expr *fn,
                    ArrayRef<Expr *> args, QualType t, ExprValueKind VK,
                    SourceLocation rparenloc)
-    : CallExpr(C, SC, fn, ArrayRef<Expr *>(), args, t, VK, rparenloc) {}
+    : CallExpr(C, SC, fn, ArrayRef<Expr *>(), args, t, VK, rparenloc) {
+    }
 
 CallExpr::CallExpr(const ASTContext &C, Expr *fn, ArrayRef<Expr *> args,
                    QualType t, ExprValueKind VK, SourceLocation rparenloc)
@@ -1453,6 +1467,7 @@ MemberExpr *MemberExpr::Create(
                                             targs ? targs->size() : 0);
 
   void *Mem = C.Allocate(Size, alignof(MemberExpr));
+
   MemberExpr *E = new (Mem)
       MemberExpr(base, isarrow, OperatorLoc, memberdecl, nameinfo, ty, vk, ok);
 
@@ -1699,6 +1714,9 @@ ImplicitCastExpr *ImplicitCastExpr::Create(const ASTContext &C, QualType T,
                                            CastKind Kind, Expr *Operand,
                                            const CXXCastPath *BasePath,
                                            ExprValueKind VK) {
+  if (Operand->getType().isDeviceType()) // silently propagate the device memory qualifier
+    T = C.getDeviceQualType(T);
+
   unsigned PathSize = (BasePath ? BasePath->size() : 0);
   void *Buffer = C.Allocate(totalSizeToAlloc<CXXBaseSpecifier *>(PathSize));
   ImplicitCastExpr *E =

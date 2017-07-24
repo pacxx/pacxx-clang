@@ -2663,10 +2663,10 @@ bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Res,
     Res.getTargetOpts().HostTriple = Res.getFrontendOpts().AuxTriple;
   
 // enable PACXX for compilation
-
   if (Res.getFrontendOpts().PACXXCompilationMode) {
     bool emits_llvm = Res.getFrontendOpts().ProgramAction == frontend::EmitBC
-                   || Res.getFrontendOpts().ProgramAction == frontend::EmitLLVM;
+                   || Res.getFrontendOpts().ProgramAction == frontend::EmitLLVM
+                   || Res.getFrontendOpts().ProgramAction == frontend::EmitLLVMOnly;
     if (!emits_llvm) {
       Diags.Report(diag::err_pacxx_unsupported_action);
       Success = false;

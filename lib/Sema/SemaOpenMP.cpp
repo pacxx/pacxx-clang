@@ -129,6 +129,8 @@ private:
     bool CancelRegion = false;
     unsigned AssociatedLoops = 1;
     SourceLocation InnerTeamsRegionLoc;
+    /// Reference to the taskgroup task_reduction reference expression.
+    Expr *TaskgroupReductionRef = nullptr;
     SharingMapTy(OpenMPDirectiveKind DKind, DeclarationNameInfo Name,
                  Scope *CurScope, SourceLocation Loc)
         : Directive(DKind), DirectiveName(Name), CurScope(CurScope),
@@ -244,18 +246,36 @@ public:
 
   /// Adds additional information for the reduction items with the reduction id
   /// represented as an operator.
-  void addReductionData(ValueDecl *D, SourceRange SR, BinaryOperatorKind BOK);
+  void addTaskgroupReductionData(ValueDecl *D, SourceRange SR,
+                                 BinaryOperatorKind BOK);
   /// Adds additional information for the reduction items with the reduction id
   /// represented as reduction identifier.
-  void addReductionData(ValueDecl *D, SourceRange SR, const Expr *ReductionRef);
+  void addTaskgroupReductionData(ValueDecl *D, SourceRange SR,
+                                 const Expr *ReductionRef);
   /// Returns the location and reduction operation from the innermost parent
   /// region for the given \p D.
   DSAVarData getTopMostTaskgroupReductionData(ValueDecl *D, SourceRange &SR,
-                                              BinaryOperatorKind &BOK);
+                                              BinaryOperatorKind &BOK,
+                                              Expr *&TaskgroupDescriptor);
   /// Returns the location and reduction operation from the innermost parent
   /// region for the given \p D.
   DSAVarData getTopMostTaskgroupReductionData(ValueDecl *D, SourceRange &SR,
-                                              const Expr *&ReductionRef);
+                                              const Expr *&ReductionRef,
+                                              Expr *&TaskgroupDescriptor);
+  /// Return reduction reference expression for the current taskgroup.
+  Expr *getTaskgroupReductionRef() const {
+    assert(Stack.back().first.back().Directive == OMPD_taskgroup &&
+           "taskgroup reference expression requested for non taskgroup "
+           "directive.");
+    return Stack.back().first.back().TaskgroupReductionRef;
+  }
+  /// Checks if the given \p VD declaration is actually a taskgroup reduction
+  /// descriptor variable at the \p Level of OpenMP regions.
+  bool isTaskgroupReductionRef(ValueDecl *VD, unsigned Level) const {
+    return Stack.back().first[Level].TaskgroupReductionRef &&
+           cast<DeclRefExpr>(Stack.back().first[Level].TaskgroupReductionRef)
+                   ->getDecl() == VD;
+  }
 
   /// \brief Returns data sharing attributes from top of the stack for the
   /// specified declaration.
@@ -745,102 +765,6 @@ void DSAStackTy::addDSA(ValueDecl *D, Expr *E, OpenMPClauseKind A,
   }
 }
 
-void DSAStackTy::addReductionData(ValueDecl *D, SourceRange SR,
-                                  BinaryOperatorKind BOK) {
-  D = getCanonicalDecl(D);
-  assert(!isStackEmpty() && "Data-sharing attributes stack is empty");
-  assert(
-      Stack.back().first.back().SharingMap[D].Attributes == OMPC_reduction &&
-      "Additional reduction info may be specified only for reduction items.");
-  auto &ReductionData = Stack.back().first.back().ReductionMap[D];
-  assert(ReductionData.ReductionRange.isInvalid() &&
-         "Additional reduction info may be specified only once for reduction "
-         "items.");
-  ReductionData.set(BOK, SR);
-}
-
-void DSAStackTy::addReductionData(ValueDecl *D, SourceRange SR,
-                                  const Expr *ReductionRef) {
-  D = getCanonicalDecl(D);
-  assert(!isStackEmpty() && "Data-sharing attributes stack is empty");
-  assert(
-      Stack.back().first.back().SharingMap[D].Attributes == OMPC_reduction &&
-      "Additional reduction info may be specified only for reduction items.");
-  auto &ReductionData = Stack.back().first.back().ReductionMap[D];
-  assert(ReductionData.ReductionRange.isInvalid() &&
-         "Additional reduction info may be specified only once for reduction "
-         "items.");
-  ReductionData.set(ReductionRef, SR);
-}
-
-DSAStackTy::DSAVarData
-DSAStackTy::getTopMostTaskgroupReductionData(ValueDecl *D, SourceRange &SR,
-                                             BinaryOperatorKind &BOK) {
-  D = getCanonicalDecl(D);
-  assert(!isStackEmpty() && "Data-sharing attributes stack is empty.");
-  if (Stack.back().first.empty())
-      return DSAVarData();
-  for (auto I = std::next(Stack.back().first.rbegin(), 1),
-            E = Stack.back().first.rend();
-       I != E; std::advance(I, 1)) {
-    auto &Data = I->SharingMap[D];
-    if (Data.Attributes != OMPC_reduction || I->Directive != OMPD_taskgroup)
-      continue;
-    auto &ReductionData = I->ReductionMap[D];
-    if (!ReductionData.ReductionOp ||
-        ReductionData.ReductionOp.is<const Expr *>())
-      return DSAVarData();
-    SR = ReductionData.ReductionRange;
-    BOK = ReductionData.ReductionOp.get<ReductionData::BOKPtrType>();
-    return DSAVarData(OMPD_taskgroup, OMPC_reduction, Data.RefExpr.getPointer(),
-                      Data.PrivateCopy, I->DefaultAttrLoc);
-  }
-  return DSAVarData();
-}
-
-DSAStackTy::DSAVarData
-DSAStackTy::getTopMostTaskgroupReductionData(ValueDecl *D, SourceRange &SR,
-                                             const Expr *&ReductionRef) {
-  D = getCanonicalDecl(D);
-  assert(!isStackEmpty() && "Data-sharing attributes stack is empty.");
-  if (Stack.back().first.empty())
-      return DSAVarData();
-  for (auto I = std::next(Stack.back().first.rbegin(), 1),
-            E = Stack.back().first.rend();
-       I != E; std::advance(I, 1)) {
-    auto &Data = I->SharingMap[D];
-    if (Data.Attributes != OMPC_reduction || I->Directive != OMPD_taskgroup)
-      continue;
-    auto &ReductionData = I->ReductionMap[D];
-    if (!ReductionData.ReductionOp ||
-        !ReductionData.ReductionOp.is<const Expr *>())
-      return DSAVarData();
-    SR = ReductionData.ReductionRange;
-    ReductionRef = ReductionData.ReductionOp.get<const Expr *>();
-    return DSAVarData(OMPD_taskgroup, OMPC_reduction, Data.RefExpr.getPointer(),
-                      Data.PrivateCopy, I->DefaultAttrLoc);
-  }
-  return DSAVarData();
-}
-
-bool DSAStackTy::isOpenMPLocal(VarDecl *D, StackTy::reverse_iterator Iter) {
-  D = D->getCanonicalDecl();
-  if (!isStackEmpty() && Stack.back().first.size() > 1) {
-    reverse_iterator I = Iter, E = Stack.back().first.rend();
-    Scope *TopScope = nullptr;
-    while (I != E && !isParallelOrTaskRegion(I->Directive))
-      ++I;
-    if (I == E)
-      return false;
-    TopScope = I->CurScope ? I->CurScope->getParent() : nullptr;
-    Scope *CurScope = getCurScope();
-    while (CurScope != TopScope && !CurScope->isDeclScope(D))
-      CurScope = CurScope->getParent();
-    return CurScope != TopScope;
-  }
-  return false;
-}
-
 /// \brief Build a variable declaration for OpenMP loop iteration variable.
 static VarDecl *buildVarDecl(Sema &SemaRef, SourceLocation Loc, QualType Type,
                              StringRef Name, const AttrVec *Attrs = nullptr) {
@@ -866,6 +790,130 @@ static DeclRefExpr *buildDeclRefExpr(Sema &S, VarDecl *D, QualType Ty,
   return DeclRefExpr::Create(S.getASTContext(), NestedNameSpecifierLoc(),
                              SourceLocation(), D, RefersToCapture, Loc, Ty,
                              VK_LValue);
+}
+
+void DSAStackTy::addTaskgroupReductionData(ValueDecl *D, SourceRange SR,
+                                           BinaryOperatorKind BOK) {
+  D = getCanonicalDecl(D);
+  assert(!isStackEmpty() && "Data-sharing attributes stack is empty");
+  assert(
+      Stack.back().first.back().SharingMap[D].Attributes == OMPC_reduction &&
+      "Additional reduction info may be specified only for reduction items.");
+  auto &ReductionData = Stack.back().first.back().ReductionMap[D];
+  assert(ReductionData.ReductionRange.isInvalid() &&
+         Stack.back().first.back().Directive == OMPD_taskgroup &&
+         "Additional reduction info may be specified only once for reduction "
+         "items.");
+  ReductionData.set(BOK, SR);
+  Expr *&TaskgroupReductionRef =
+      Stack.back().first.back().TaskgroupReductionRef;
+  if (!TaskgroupReductionRef) {
+    auto *VD = buildVarDecl(SemaRef, SourceLocation(),
+                            SemaRef.Context.VoidPtrTy, ".task_red.");
+    TaskgroupReductionRef = buildDeclRefExpr(
+        SemaRef, VD, SemaRef.Context.VoidPtrTy, SourceLocation());
+  }
+}
+
+void DSAStackTy::addTaskgroupReductionData(ValueDecl *D, SourceRange SR,
+                                           const Expr *ReductionRef) {
+  D = getCanonicalDecl(D);
+  assert(!isStackEmpty() && "Data-sharing attributes stack is empty");
+  assert(
+      Stack.back().first.back().SharingMap[D].Attributes == OMPC_reduction &&
+      "Additional reduction info may be specified only for reduction items.");
+  auto &ReductionData = Stack.back().first.back().ReductionMap[D];
+  assert(ReductionData.ReductionRange.isInvalid() &&
+         Stack.back().first.back().Directive == OMPD_taskgroup &&
+         "Additional reduction info may be specified only once for reduction "
+         "items.");
+  ReductionData.set(ReductionRef, SR);
+  Expr *&TaskgroupReductionRef =
+      Stack.back().first.back().TaskgroupReductionRef;
+  if (!TaskgroupReductionRef) {
+    auto *VD = buildVarDecl(SemaRef, SourceLocation(),
+                            SemaRef.Context.VoidPtrTy, ".task_red.");
+    TaskgroupReductionRef = buildDeclRefExpr(
+        SemaRef, VD, SemaRef.Context.VoidPtrTy, SourceLocation());
+  }
+}
+
+DSAStackTy::DSAVarData
+DSAStackTy::getTopMostTaskgroupReductionData(ValueDecl *D, SourceRange &SR,
+                                             BinaryOperatorKind &BOK,
+                                             Expr *&TaskgroupDescriptor) {
+  D = getCanonicalDecl(D);
+  assert(!isStackEmpty() && "Data-sharing attributes stack is empty.");
+  if (Stack.back().first.empty())
+      return DSAVarData();
+  for (auto I = std::next(Stack.back().first.rbegin(), 1),
+            E = Stack.back().first.rend();
+       I != E; std::advance(I, 1)) {
+    auto &Data = I->SharingMap[D];
+    if (Data.Attributes != OMPC_reduction || I->Directive != OMPD_taskgroup)
+      continue;
+    auto &ReductionData = I->ReductionMap[D];
+    if (!ReductionData.ReductionOp ||
+        ReductionData.ReductionOp.is<const Expr *>())
+      return DSAVarData();
+    SR = ReductionData.ReductionRange;
+    BOK = ReductionData.ReductionOp.get<ReductionData::BOKPtrType>();
+    assert(I->TaskgroupReductionRef && "taskgroup reduction reference "
+                                       "expression for the descriptor is not "
+                                       "set.");
+    TaskgroupDescriptor = I->TaskgroupReductionRef;
+    return DSAVarData(OMPD_taskgroup, OMPC_reduction, Data.RefExpr.getPointer(),
+                      Data.PrivateCopy, I->DefaultAttrLoc);
+  }
+  return DSAVarData();
+}
+
+DSAStackTy::DSAVarData
+DSAStackTy::getTopMostTaskgroupReductionData(ValueDecl *D, SourceRange &SR,
+                                             const Expr *&ReductionRef,
+                                             Expr *&TaskgroupDescriptor) {
+  D = getCanonicalDecl(D);
+  assert(!isStackEmpty() && "Data-sharing attributes stack is empty.");
+  if (Stack.back().first.empty())
+      return DSAVarData();
+  for (auto I = std::next(Stack.back().first.rbegin(), 1),
+            E = Stack.back().first.rend();
+       I != E; std::advance(I, 1)) {
+    auto &Data = I->SharingMap[D];
+    if (Data.Attributes != OMPC_reduction || I->Directive != OMPD_taskgroup)
+      continue;
+    auto &ReductionData = I->ReductionMap[D];
+    if (!ReductionData.ReductionOp ||
+        !ReductionData.ReductionOp.is<const Expr *>())
+      return DSAVarData();
+    SR = ReductionData.ReductionRange;
+    ReductionRef = ReductionData.ReductionOp.get<const Expr *>();
+    assert(I->TaskgroupReductionRef && "taskgroup reduction reference "
+                                       "expression for the descriptor is not "
+                                       "set.");
+    TaskgroupDescriptor = I->TaskgroupReductionRef;
+    return DSAVarData(OMPD_taskgroup, OMPC_reduction, Data.RefExpr.getPointer(),
+                      Data.PrivateCopy, I->DefaultAttrLoc);
+  }
+  return DSAVarData();
+}
+
+bool DSAStackTy::isOpenMPLocal(VarDecl *D, StackTy::reverse_iterator Iter) {
+  D = D->getCanonicalDecl();
+  if (!isStackEmpty() && Stack.back().first.size() > 1) {
+    reverse_iterator I = Iter, E = Stack.back().first.rend();
+    Scope *TopScope = nullptr;
+    while (I != E && !isParallelOrTaskRegion(I->Directive))
+      ++I;
+    if (I == E)
+      return false;
+    TopScope = I->CurScope ? I->CurScope->getParent() : nullptr;
+    Scope *CurScope = getCurScope();
+    while (CurScope != TopScope && !CurScope->isDeclScope(D))
+      CurScope = CurScope->getParent();
+    return CurScope != TopScope;
+  }
+  return false;
 }
 
 DSAStackTy::DSAVarData DSAStackTy::getTopDSA(ValueDecl *D, bool FromParent) {
@@ -1269,7 +1317,14 @@ VarDecl *Sema::IsOpenMPCapturedDecl(ValueDecl *D) {
 bool Sema::isOpenMPPrivateDecl(ValueDecl *D, unsigned Level) {
   assert(LangOpts.OpenMP && "OpenMP is not allowed");
   return DSAStack->hasExplicitDSA(
-      D, [](OpenMPClauseKind K) -> bool { return K == OMPC_private; }, Level);
+             D, [](OpenMPClauseKind K) -> bool { return K == OMPC_private; },
+             Level) ||
+         // Consider taskgroup reduction descriptor variable a private to avoid
+         // possible capture in the region.
+         (DSAStack->hasExplicitDirective(
+              [](OpenMPDirectiveKind K) { return K == OMPD_taskgroup; },
+              Level) &&
+          DSAStack->isTaskgroupReductionRef(D, Level));
 }
 
 bool Sema::isOpenMPTargetCapturedDecl(ValueDecl *D, unsigned Level) {
@@ -2108,6 +2163,15 @@ StmtResult Sema::ActOnOpenMPRegionEnd(StmtResult S,
   SmallVector<OMPClauseWithPreInit *, 8> PICs;
   // This is required for proper codegen.
   for (auto *Clause : Clauses) {
+    if (isOpenMPTaskingDirective(DSAStack->getCurrentDirective()) &&
+        Clause->getClauseKind() == OMPC_in_reduction) {
+      // Capture taskgroup task_reduction descriptors inside the tasking regions
+      // with the corresponding in_reduction items.
+      auto *IRC = cast<OMPInReductionClause>(Clause);
+      for (auto *E : IRC->taskgroup_descriptors())
+        if (E)
+          MarkDeclarationsReferencedInExpr(E);
+    }
     if (isOpenMPPrivate(Clause->getClauseKind()) ||
         Clause->getClauseKind() == OMPC_copyprivate ||
         (getLangOpts().OpenMPUseTLS &&
@@ -2538,13 +2602,24 @@ StmtResult Sema::ActOnOpenMPExecutableDirective(
     // Generate list of implicitly defined firstprivate variables.
     VarsWithInheritedDSA = DSAChecker.getVarsWithInheritedDSA();
 
-    if (!DSAChecker.getImplicitFirstprivate().empty()) {
+    SmallVector<Expr *, 4> ImplicitFirstprivates(
+        DSAChecker.getImplicitFirstprivate().begin(),
+        DSAChecker.getImplicitFirstprivate().end());
+    // Mark taskgroup task_reduction descriptors as implicitly firstprivate.
+    for (auto *C : Clauses) {
+      if (auto *IRC = dyn_cast<OMPInReductionClause>(C)) {
+        for (auto *E : IRC->taskgroup_descriptors())
+          if (E)
+            ImplicitFirstprivates.emplace_back(E);
+      }
+    }
+    if (!ImplicitFirstprivates.empty()) {
       if (OMPClause *Implicit = ActOnOpenMPFirstprivateClause(
-              DSAChecker.getImplicitFirstprivate(), SourceLocation(),
-              SourceLocation(), SourceLocation())) {
+              ImplicitFirstprivates, SourceLocation(), SourceLocation(),
+              SourceLocation())) {
         ClausesWithImplicit.push_back(Implicit);
         ErrorFound = cast<OMPFirstprivateClause>(Implicit)->varlist_size() !=
-                     DSAChecker.getImplicitFirstprivate().size();
+                     ImplicitFirstprivates.size();
       } else
         ErrorFound = true;
     }
@@ -5194,7 +5269,8 @@ StmtResult Sema::ActOnOpenMPTaskgroupDirective(ArrayRef<OMPClause *> Clauses,
   getCurFunction()->setHasBranchProtectedScope();
 
   return OMPTaskgroupDirective::Create(Context, StartLoc, EndLoc, Clauses,
-                                       AStmt);
+                                       AStmt,
+                                       DSAStack->getTaskgroupReductionRef());
 }
 
 StmtResult Sema::ActOnOpenMPFlushDirective(ArrayRef<OMPClause *> Clauses,
@@ -9017,6 +9093,9 @@ struct ReductionData {
   SmallVector<Expr *, 8> RHSs;
   /// Reduction operation expression.
   SmallVector<Expr *, 8> ReductionOps;
+  /// Taskgroup descriptors for the corresponding reduction items in
+  /// in_reduction clauses.
+  SmallVector<Expr *, 8> TaskgroupDescriptors;
   /// List of captures for clause.
   SmallVector<Decl *, 4> ExprCaptures;
   /// List of postupdate expressions.
@@ -9029,6 +9108,7 @@ struct ReductionData {
     LHSs.reserve(Size);
     RHSs.reserve(Size);
     ReductionOps.reserve(Size);
+    TaskgroupDescriptors.reserve(Size);
     ExprCaptures.reserve(Size);
     ExprPostUpdates.reserve(Size);
   }
@@ -9040,15 +9120,17 @@ struct ReductionData {
     LHSs.emplace_back(nullptr);
     RHSs.emplace_back(nullptr);
     ReductionOps.emplace_back(ReductionOp);
+    TaskgroupDescriptors.emplace_back(nullptr);
   }
   /// Stores reduction data.
-  void push(Expr *Item, Expr *Private, Expr *LHS, Expr *RHS,
-            Expr *ReductionOp) {
+  void push(Expr *Item, Expr *Private, Expr *LHS, Expr *RHS, Expr *ReductionOp,
+            Expr *TaskgroupDescriptor) {
     Vars.emplace_back(Item);
     Privates.emplace_back(Private);
     LHSs.emplace_back(LHS);
     RHSs.emplace_back(RHS);
     ReductionOps.emplace_back(ReductionOp);
+    TaskgroupDescriptors.emplace_back(TaskgroupDescriptor);
   }
 };
 } // namespace
@@ -9187,6 +9269,7 @@ static bool ActOnOMPReductionKindClause(
     if (!D)
       continue;
 
+    Expr *TaskgroupDescriptor = nullptr;
     QualType Type;
     auto *ASE = dyn_cast<ArraySubscriptExpr>(RefExpr->IgnoreParens());
     auto *OASE = dyn_cast<OMPArraySectionExpr>(RefExpr->IgnoreParens());
@@ -9563,11 +9646,13 @@ static bool ActOnOMPReductionKindClause(
       SourceRange ParentSR;
       BinaryOperatorKind ParentBOK;
       const Expr *ParentReductionOp;
+      Expr *ParentBOKTD, *ParentReductionOpTD;
       DSAStackTy::DSAVarData ParentBOKDSA =
-          Stack->getTopMostTaskgroupReductionData(D, ParentSR, ParentBOK);
+          Stack->getTopMostTaskgroupReductionData(D, ParentSR, ParentBOK,
+                                                  ParentBOKTD);
       DSAStackTy::DSAVarData ParentReductionOpDSA =
-          Stack->getTopMostTaskgroupReductionData(D, ParentSR,
-                                                  ParentReductionOp);
+          Stack->getTopMostTaskgroupReductionData(
+              D, ParentSR, ParentReductionOp, ParentReductionOpTD);
       bool IsParentBOK = ParentBOKDSA.DKind != OMPD_unknown;
       bool IsParentReductionOp = ParentReductionOpDSA.DKind != OMPD_unknown;
       if (!IsParentBOK && !IsParentReductionOp) {
@@ -9598,6 +9683,8 @@ static bool ActOnOMPReductionKindClause(
           continue;
         }
       }
+      TaskgroupDescriptor = IsParentBOK ? ParentBOKTD : ParentReductionOpTD;
+      assert(TaskgroupDescriptor && "Taskgroup descriptor must be defined.");
     }
 
     DeclRefExpr *Ref = nullptr;
@@ -9639,11 +9726,13 @@ static bool ActOnOMPReductionKindClause(
     Stack->addDSA(D, RefExpr->IgnoreParens(), OMPC_reduction, Ref);
     if (CurrDir == OMPD_taskgroup) {
       if (DeclareReductionRef.isUsable())
-        Stack->addReductionData(D, ReductionIdRange, DeclareReductionRef.get());
+        Stack->addTaskgroupReductionData(D, ReductionIdRange,
+                                         DeclareReductionRef.get());
       else
-        Stack->addReductionData(D, ReductionIdRange, BOK);
+        Stack->addTaskgroupReductionData(D, ReductionIdRange, BOK);
     }
-    RD.push(VarsExpr, PrivateDRE, LHSDRE, RHSDRE, ReductionOp.get());
+    RD.push(VarsExpr, PrivateDRE, LHSDRE, RHSDRE, ReductionOp.get(),
+            TaskgroupDescriptor);
   }
   return RD.Vars.empty();
 }
@@ -9706,7 +9795,7 @@ OMPClause *Sema::ActOnOpenMPInReductionClause(
   return OMPInReductionClause::Create(
       Context, StartLoc, LParenLoc, ColonLoc, EndLoc, RD.Vars,
       ReductionIdScopeSpec.getWithLocInContext(Context), ReductionId,
-      RD.Privates, RD.LHSs, RD.RHSs, RD.ReductionOps,
+      RD.Privates, RD.LHSs, RD.RHSs, RD.ReductionOps, RD.TaskgroupDescriptors,
       buildPreInits(Context, RD.ExprCaptures),
       buildPostUpdate(*this, RD.ExprPostUpdates));
 }
@@ -10397,23 +10486,26 @@ Sema::ActOnOpenMPDependClause(OpenMPDependClauseKind DepKind,
         }
         OpsOffs.push_back({RHS, OOK});
       } else {
-        // OpenMP  [2.11.1.1, Restrictions, p.3]
-        //  A variable that is part of another variable (such as a field of a
-        //  structure) but is not an array element or an array section cannot
-        //  appear  in a depend clause.
-        auto *DE = dyn_cast<DeclRefExpr>(SimpleExpr);
         auto *ASE = dyn_cast<ArraySubscriptExpr>(SimpleExpr);
-        auto *OASE = dyn_cast<OMPArraySectionExpr>(SimpleExpr);
         if (!RefExpr->IgnoreParenImpCasts()->isLValue() ||
-            (!ASE && !DE && !OASE) || (DE && !isa<VarDecl>(DE->getDecl())) ||
             (ASE &&
              !ASE->getBase()
                   ->getType()
                   .getNonReferenceType()
                   ->isPointerType() &&
              !ASE->getBase()->getType().getNonReferenceType()->isArrayType())) {
-          Diag(ELoc, diag::err_omp_expected_var_name_member_expr_or_array_item)
-              << 0 << RefExpr->getSourceRange();
+          Diag(ELoc, diag::err_omp_expected_addressable_lvalue_or_array_item)
+              << RefExpr->getSourceRange();
+          continue;
+        }
+        bool Suppress = getDiagnostics().getSuppressAllDiagnostics();
+        getDiagnostics().setSuppressAllDiagnostics(/*Val=*/true);
+        ExprResult Res = CreateBuiltinUnaryOp(SourceLocation(), UO_AddrOf,
+                                              RefExpr->IgnoreParenImpCasts());
+        getDiagnostics().setSuppressAllDiagnostics(Suppress);
+        if (!Res.isUsable() && !isa<OMPArraySectionExpr>(SimpleExpr)) {
+          Diag(ELoc, diag::err_omp_expected_addressable_lvalue_or_array_item)
+              << RefExpr->getSourceRange();
           continue;
         }
       }

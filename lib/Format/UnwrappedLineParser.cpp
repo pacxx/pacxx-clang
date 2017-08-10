@@ -326,6 +326,11 @@ void UnwrappedLineParser::parseLevel(bool HasOpeningBrace) {
       break;
     case tok::kw_default:
     case tok::kw_case:
+      if (Style.Language == FormatStyle::LK_JavaScript && Line->MustBeDeclaration) {
+        // A 'case: string' style field declaration.
+        parseStructuralElement();
+        break;
+      }
       if (!SwitchLabelEncountered &&
           (Style.IndentCaseLabels || (Line->InPPDirective && Line->Level == 1)))
         ++Line->Level;
@@ -848,7 +853,8 @@ void UnwrappedLineParser::readTokenWithJavaScriptASI() {
        Previous->isOneOf(tok::r_square, tok::r_paren, tok::plusplus,
                          tok::minusminus)))
     return addUnwrappedLine();
-  if (PreviousMustBeValue && isJSDeclOrStmt(Keywords, Next))
+  if ((PreviousMustBeValue || Previous->is(tok::r_paren)) &&
+      isJSDeclOrStmt(Keywords, Next))
     return addUnwrappedLine();
 }
 
@@ -953,13 +959,22 @@ void UnwrappedLineParser::parseStructuralElement() {
     parseDoWhile();
     return;
   case tok::kw_switch:
+    if (Style.Language == FormatStyle::LK_JavaScript && Line->MustBeDeclaration)
+      // 'switch: string' field declaration.
+      break;
     parseSwitch();
     return;
   case tok::kw_default:
+    if (Style.Language == FormatStyle::LK_JavaScript && Line->MustBeDeclaration)
+      // 'default: string' field declaration.
+      break;
     nextToken();
     parseLabel();
     return;
   case tok::kw_case:
+    if (Style.Language == FormatStyle::LK_JavaScript && Line->MustBeDeclaration)
+      // 'case: string' field declaration.
+      break;
     parseCaseLabel();
     return;
   case tok::kw_try:
@@ -1449,6 +1464,15 @@ bool UnwrappedLineParser::parseBracedList(bool ContinueOnSemicolons,
       FormatTok->BlockKind = BK_BracedInit;
       nextToken();
       parseBracedList();
+      break;
+    case tok::less:
+      if (Style.Language == FormatStyle::LK_Proto) {
+        nextToken();
+        parseBracedList(/*ContinueOnSemicolons=*/false,
+                        /*ClosingBraceKind=*/tok::greater);
+      } else {
+        nextToken();
+      }
       break;
     case tok::semi:
       // JavaScript (or more precisely TypeScript) can have semicolons in braced

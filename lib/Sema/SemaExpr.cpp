@@ -5311,6 +5311,12 @@ auto ValidPACXXKernelLambda(CXXRecordDecl *RDecl, Sema &S) {
                             diag::err_pacxx_default_lambda_capture_by_ref) << RDecl->getSourceRange());
   }
   for (auto &cap : RDecl->captures()) {
+    if (cap.getCapturedVar()->getType()->isPointerType()){
+      if (!cap.getCapturedVar()->getType().isDeviceType())
+        return ExprError(S.Diag(cap.getLocation(), diag::err_pacxx_lambda_captures_unqual_pointer)
+                             << cap.getCapturedVar() << RDecl->getSourceRange());
+    }
+
     if (cap.getCaptureKind() == LambdaCaptureKind::LCK_ByRef) {
       return ExprError(S.Diag(cap.getLocation(), diag::err_pacxx_lambda_capture_by_ref)
                            << cap.getCapturedVar() << RDecl->getSourceRange());
@@ -11879,6 +11885,20 @@ ExprResult Sema::BuildBinOp(Scope *S, SourceLocation OpLoc,
   return CreateBuiltinBinOp(OpLoc, Opc, LHSExpr, RHSExpr);
 }
 
+static void CheckForPACXXDeviceMemoryDereference(Sema &S, UnaryOperatorKind Opc, const Expr *E) {
+  // Check to see if we are dereferencing a device memory pointer. If so, this is
+  // undefined behavior, so warn about it.
+    if (Opc == UO_Deref) {
+      if (E->getType().isDeviceType()) {
+          S.DiagRuntimeBehavior(E->getExprLoc(), E,
+                                S.PDiag(diag::warn_pacxx_device_memory_deref)
+                                    << E->getSourceRange());
+      }
+    }
+
+}
+
+
 ExprResult Sema::CreateBuiltinUnaryOp(SourceLocation OpLoc,
                                       UnaryOperatorKind Opc,
                                       Expr *InputExpr) {
@@ -12108,6 +12128,8 @@ static bool isQualifiedMemberAccess(Expr *E) {
 
 ExprResult Sema::BuildUnaryOp(Scope *S, SourceLocation OpLoc,
                               UnaryOperatorKind Opc, Expr *Input) {
+  CheckForPACXXDeviceMemoryDereference(*this, Opc, Input);
+
   // First things first: handle placeholders so that the
   // overloaded-operator check considers the right type.
   if (const BuiltinType *pty = Input->getType()->getAsPlaceholderType()) {

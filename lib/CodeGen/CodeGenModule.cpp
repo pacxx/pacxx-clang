@@ -1026,11 +1026,13 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
     F->setVisibility(llvm::GlobalValue::VisibilityTypes::DefaultVisibility);
 
     // add pacxx metadata
-    llvm::NamedMDNode *pacxxMD = F->getParent()->getOrInsertNamedMetadata("pacxx.kernel");
-    llvm::SmallVector<llvm::Metadata *, 1> mdArgs;
-    mdArgs.push_back(llvm::ConstantAsMetadata::get(F));
-    pacxxMD->addOperand(llvm::MDNode::get(F->getContext(), mdArgs));
-    F->getParent()->getOrInsertNamedMetadata("pacxx.kernel." + F->getName().str());
+    if (D->hasAttr<PACXXKernelAttr>()) {
+      llvm::NamedMDNode *pacxxMD = F->getParent()->getOrInsertNamedMetadata("pacxx.kernel");
+      llvm::SmallVector<llvm::Metadata *, 1> mdArgs;
+      mdArgs.push_back(llvm::ConstantAsMetadata::get(F));
+      pacxxMD->addOperand(llvm::MDNode::get(F->getContext(), mdArgs));
+      F->getParent()->getOrInsertNamedMetadata("pacxx.kernel." + F->getName().str());
+    }
   }
 
   F->addAttributes(llvm::AttributeList::FunctionIndex, B);

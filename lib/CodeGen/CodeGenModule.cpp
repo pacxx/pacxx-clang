@@ -2857,18 +2857,14 @@ void CodeGenModule::EmitGlobalVarDefinition(const VarDecl *D,
     }
   }
 
-  // PACXX MOD: Add metadata to identify address spaces
+  //PACXX MOD: Add metadata to identify address spaces
   if (GV && LangOpts.PACXX) {
     if (D->hasAttr<PACXXSharedAttr>()){
-      GV->setMetadata("pacxx.as.shared", llvm::MDNode::get(getLLVMContext(), nullptr));
+      Linkage = llvm::GlobalValue::ExternalLinkage;
     }
-    if (D->hasAttr<PACXXConstantAttr>()){
+    if (D->hasAttr<PACXXConstantAttr>() || D->hasAttr<PACXXDeviceAttr>()){
       GV->setExternallyInitialized(true);
-      GV->setMetadata("pacxx.as.constant", llvm::MDNode::get(getLLVMContext(), nullptr));
-    }
-    if (D->hasAttr<PACXXDeviceAttr>()){
-      GV->setExternallyInitialized(true);
-      GV->setMetadata("pacxx.as.device", llvm::MDNode::get(getLLVMContext(), nullptr));
+      Linkage = llvm::GlobalValue::InternalLinkage;
     }
   }
 

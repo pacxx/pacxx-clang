@@ -1126,6 +1126,12 @@ CodeGenFunction::EmitAutoVarAlloca(const VarDecl &D) {
   setAddrOfLocalVar(&D, address);
   emission.Addr = address;
 
+  if (D.hasAttr<PACXXSharedAttr>())
+  {
+    if (auto Alloca = dyn_cast<llvm::AllocaInst>(address.getPointer()))
+      Alloca->setMetadata("pacxx.as.shared", llvm::MDNode::get(getLLVMContext(), nullptr));
+  }
+
   // Emit debug info for local var declaration.
   if (HaveInsertPoint())
     if (CGDebugInfo *DI = getDebugInfo()) {

@@ -6641,7 +6641,7 @@ NamedDecl *Sema::ActOnVariableDeclarator(
     if (SC == SC_None && S->getFnParent() != nullptr &&
         (NewVD->hasAttr<PACXXSharedAttr>() ||
          NewVD->hasAttr<PACXXConstantAttr>())) {
-      NewVD->setStorageClass(SC_Static);
+     // NewVD->setStorageClass(SC_Static);
     }
   }
 

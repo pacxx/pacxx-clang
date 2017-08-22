@@ -2408,6 +2408,7 @@ CodeGenModule::GetOrCreateLLVMGlobal(StringRef MangledName,
   if (D && GV && LangOpts.PACXX) {
     if (D->hasAttr<PACXXSharedAttr>()){
       GV->setExternallyInitialized(true);
+      GV->setLinkage(llvm::GlobalValue::ExternalLinkage);
       GV->setMetadata("pacxx.as.shared", llvm::MDNode::get(getLLVMContext(), nullptr)); 
     }
     if (D->hasAttr<PACXXConstantAttr>()){

@@ -951,7 +951,6 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
   ShouldAddOptNone &= !D->hasAttr<MinSizeAttr>();
   ShouldAddOptNone &= !F->hasFnAttribute(llvm::Attribute::AlwaysInline);
   ShouldAddOptNone &= !D->hasAttr<AlwaysInlineAttr>();
-  ShouldAddOptNone &= !D->hasAttr<PACXXKernelAttr>(); // never add optnone for kernels
 
   if (ShouldAddOptNone || D->hasAttr<OptimizeNoneAttr>()) {
     B.addAttribute(llvm::Attribute::OptimizeNone);
@@ -1020,18 +1019,23 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
   // llvm inline pass
   // TODO: extract into an own function that handles all the PACXX related
   // modifications on the generated function
-  if (D->hasAttr<PACXXKernelAttr>() || D->hasAttr<PACXXReflectionAttr>()) {
-    B.addAttribute(llvm::Attribute::NoInline);
-    F->setLinkage(llvm::GlobalValue::LinkageTypes::ExternalLinkage);
-    F->setVisibility(llvm::GlobalValue::VisibilityTypes::DefaultVisibility);
+  if (LangOpts.PACXX){
+    if (!F->hasFnAttribute(llvm::Attribute::NoInline) && !B.contains(llvm::Attribute::NoInline))
+      B.addAttribute(llvm::Attribute::AlwaysInline);
+    if (D->hasAttr<PACXXKernelAttr>() || D->hasAttr<PACXXReflectionAttr>()) {
+      B.addAttribute(llvm::Attribute::NoInline);
+      B.removeAttribute(llvm::Attribute::AlwaysInline);
+      F->setLinkage(llvm::GlobalValue::LinkageTypes::ExternalLinkage);
+      F->setVisibility(llvm::GlobalValue::VisibilityTypes::DefaultVisibility);
 
-    // add pacxx metadata
-    if (D->hasAttr<PACXXKernelAttr>()) {
-      llvm::NamedMDNode *pacxxMD = F->getParent()->getOrInsertNamedMetadata("pacxx.kernel");
-      llvm::SmallVector<llvm::Metadata *, 1> mdArgs;
-      mdArgs.push_back(llvm::ConstantAsMetadata::get(F));
-      pacxxMD->addOperand(llvm::MDNode::get(F->getContext(), mdArgs));
-      F->getParent()->getOrInsertNamedMetadata("pacxx.kernel." + F->getName().str());
+      // add pacxx metadata
+      if (D->hasAttr<PACXXKernelAttr>()) {
+        llvm::NamedMDNode *pacxxMD = F->getParent()->getOrInsertNamedMetadata("pacxx.kernel");
+        llvm::SmallVector<llvm::Metadata *, 1> mdArgs;
+        mdArgs.push_back(llvm::ConstantAsMetadata::get(F));
+        pacxxMD->addOperand(llvm::MDNode::get(F->getContext(), mdArgs));
+        F->getParent()->getOrInsertNamedMetadata("pacxx.kernel." + F->getName().str());
+      }
     }
   }
 

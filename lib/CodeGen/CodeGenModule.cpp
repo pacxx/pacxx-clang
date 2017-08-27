@@ -1035,6 +1035,9 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
         pacxxMD->addOperand(llvm::MDNode::get(F->getContext(), mdArgs));
         F->getParent()->getOrInsertNamedMetadata("pacxx.kernel." + F->getName().str());
       }
+    } else{
+      F->setLinkage(llvm::GlobalValue::LinkageTypes::InternalLinkage);
+      F->setVisibility(llvm::GlobalValue::VisibilityTypes::DefaultVisibility);
     }
   }
 

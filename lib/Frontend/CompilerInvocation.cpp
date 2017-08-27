@@ -451,10 +451,9 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
   }
   Opts.OptimizationLevel = OptimizationLevel;
 
-  auto pacxx = Args.hasArg(OPT_pacxx); // we must allow inlinging when emitting PACXX IR
   // At O0 we want to fully disable inlining outside of cases marked with
   // 'alwaysinline' that are required for correctness.
-  Opts.setInlining((Opts.OptimizationLevel == 0 && !pacxx)
+  Opts.setInlining((Opts.OptimizationLevel == 0)
                        ? CodeGenOptions::OnlyAlwaysInlining
                        : CodeGenOptions::NormalInlining);
   // Explicit inlining flags can disable some or all inlining even at

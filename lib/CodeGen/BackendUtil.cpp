@@ -475,21 +475,18 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
 
   // At O0 and O1 we only run the always inliner which is more efficient. At
   // higher optimization levels we run the normal inliner.
-  // for PACXX do not run an inliner pass in the front end
-  if (!LangOpts.PACXX) {
-    if (CodeGenOpts.OptimizationLevel <= 1) {
-      bool InsertLifetimeIntrinsics = (CodeGenOpts.OptimizationLevel != 0 &&
-          !CodeGenOpts.DisableLifetimeMarkers);
-      PMBuilder.Inliner = createAlwaysInlinerLegacyPass(InsertLifetimeIntrinsics);
-    } else {
-      // We do not want to inline hot callsites for SamplePGO module-summary build
-      // because profile annotation will happen again in ThinLTO backend, and we
-      // want the IR of the hot path to match the profile.
-      PMBuilder.Inliner = createFunctionInliningPass(
-          CodeGenOpts.OptimizationLevel, CodeGenOpts.OptimizeSize,
-          (!CodeGenOpts.SampleProfileFile.empty() &&
-              CodeGenOpts.EmitSummaryIndex));
-    }
+  if (CodeGenOpts.OptimizationLevel <= 1) {
+    bool InsertLifetimeIntrinsics = (CodeGenOpts.OptimizationLevel != 0 &&
+        !CodeGenOpts.DisableLifetimeMarkers);
+    PMBuilder.Inliner = createAlwaysInlinerLegacyPass(InsertLifetimeIntrinsics);
+  } else {
+    // We do not want to inline hot callsites for SamplePGO module-summary build
+    // because profile annotation will happen again in ThinLTO backend, and we
+    // want the IR of the hot path to match the profile.
+    PMBuilder.Inliner = createFunctionInliningPass(
+        CodeGenOpts.OptimizationLevel, CodeGenOpts.OptimizeSize,
+        (!CodeGenOpts.SampleProfileFile.empty() &&
+            CodeGenOpts.EmitSummaryIndex));
   }
 
   PMBuilder.OptLevel = CodeGenOpts.OptimizationLevel;

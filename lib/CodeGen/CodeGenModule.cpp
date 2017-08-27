@@ -1020,8 +1020,6 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
   // TODO: extract into an own function that handles all the PACXX related
   // modifications on the generated function
   if (LangOpts.PACXX){
-    if (!F->hasFnAttribute(llvm::Attribute::NoInline) && !B.contains(llvm::Attribute::NoInline))
-      B.addAttribute(llvm::Attribute::AlwaysInline);
     if (D->hasAttr<PACXXKernelAttr>() || D->hasAttr<PACXXReflectionAttr>()) {
       B.addAttribute(llvm::Attribute::NoInline);
       B.removeAttribute(llvm::Attribute::AlwaysInline);

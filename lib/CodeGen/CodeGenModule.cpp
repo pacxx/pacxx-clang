@@ -1036,8 +1036,10 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
         F->getParent()->getOrInsertNamedMetadata("pacxx.kernel." + F->getName().str());
       }
     } else{
-      F->setLinkage(llvm::GlobalValue::LinkageTypes::InternalLinkage);
-      F->setVisibility(llvm::GlobalValue::VisibilityTypes::DefaultVisibility);
+      if (!F->isDeclaration()) {
+        F->setLinkage(llvm::GlobalValue::LinkageTypes::InternalLinkage);
+        F->setVisibility(llvm::GlobalValue::VisibilityTypes::DefaultVisibility);
+      }
     }
   }
 

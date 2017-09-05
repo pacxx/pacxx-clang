@@ -2891,11 +2891,21 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
   case Builtin::BI__pacxx_read_nctaid_x:
   case Builtin::BI__pacxx_read_nctaid_y:
   case Builtin::BI__pacxx_read_nctaid_z:
-  case Builtin::BI__pacxx_read_nctaid_w: {
+  case Builtin::BI__pacxx_read_nctaid_w:
+  case Builtin::BI__pacxx_vec_sqrtf:
+  case Builtin::BI__pacxx_vec_sqrt:{
     llvm::Intrinsic::ID IntrinsicId;
 
     switch (BuiltinID) {
       // PACXX MOD: pacxx specific builtins
+    case Builtin::BI__pacxx_vec_sqrtf:
+    case Builtin::BI__pacxx_vec_sqrt: {
+      llvm::Type *ResultType = ConvertType(E->getType());
+      Value *X = EmitScalarExpr(E->getArg(0));
+      IntrinsicId = llvm::Intrinsic::sqrt;
+      llvm::Function *F = CGM.getIntrinsic(IntrinsicId, ResultType);
+      return RValue::get(Builder.CreateCall(F, X));
+    }
     case Builtin::BI__pacxx_barrier: {
       IntrinsicId = llvm::Intrinsic::pacxx_barrier0;
       break;

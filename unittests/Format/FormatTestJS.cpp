@@ -271,14 +271,21 @@ TEST_F(FormatTestJS, ReservedWords) {
   verifyFormat("x.case = 1;");
   verifyFormat("x.interface = 1;");
   verifyFormat("x.for = 1;");
-  verifyFormat("x.of() = 1;");
+  verifyFormat("x.of();");
   verifyFormat("of(null);");
   verifyFormat("import {of} from 'x';");
-  verifyFormat("x.in() = 1;");
-  verifyFormat("x.let() = 1;");
-  verifyFormat("x.var() = 1;");
-  verifyFormat("x.for() = 1;");
-  verifyFormat("x.as() = 1;");
+  verifyFormat("x.in();");
+  verifyFormat("x.let();");
+  verifyFormat("x.var();");
+  verifyFormat("x.for();");
+  verifyFormat("x.as();");
+  verifyFormat("x.instanceof();");
+  verifyFormat("x.switch();");
+  verifyFormat("x.case();");
+  verifyFormat("x.delete();");
+  verifyFormat("x.throw();");
+  verifyFormat("x.throws();");
+  verifyFormat("x.if();");
   verifyFormat("x = {\n"
                "  a: 12,\n"
                "  interface: 1,\n"
@@ -1228,7 +1235,6 @@ TEST_F(FormatTestJS, TryCatch) {
   // But, of course, "catch" is a perfectly fine function name in JavaScript.
   verifyFormat("someObject.catch();");
   verifyFormat("someObject.new();");
-  verifyFormat("someObject.delete();");
 }
 
 TEST_F(FormatTestJS, StringLiteralConcatenation) {
@@ -1555,6 +1561,10 @@ TEST_F(FormatTestJS, TypeAliases) {
                "  y: number\n"
                "};\n"
                "class C {}");
+  verifyFormat("export type X = {\n"
+               "  a: string,\n"
+               "  b?: string,\n"
+               "};\n");
 }
 
 TEST_F(FormatTestJS, TypeInterfaceLineWrapping) {
@@ -1783,32 +1793,28 @@ TEST_F(FormatTestJS, TemplateStrings) {
   verifyFormat("var x = someFunction(`${})`)  //\n"
                "            .oooooooooooooooooon();");
   verifyFormat("var x = someFunction(`${aaaa}${\n"
-               "                               aaaaa(  //\n"
-               "                                   aaaaa)\n"
-               "                             })`);");
+               "    aaaaa(  //\n"
+               "        aaaaa)})`);");
 }
 
 TEST_F(FormatTestJS, TemplateStringMultiLineExpression) {
   verifyFormat("var f = `aaaaaaaaaaaaaaaaaa: ${\n"
-               "                               aaaaa +  //\n"
-               "                               bbbb\n"
-               "                             }`;",
+               "    aaaaa +  //\n"
+               "    bbbb}`;",
                "var f = `aaaaaaaaaaaaaaaaaa: ${aaaaa +  //\n"
                "                               bbbb}`;");
   verifyFormat("var f = `\n"
                "  aaaaaaaaaaaaaaaaaa: ${\n"
-               "                        aaaaa +  //\n"
-               "                        bbbb\n"
-               "                      }`;",
+               "    aaaaa +  //\n"
+               "    bbbb}`;",
                "var f  =  `\n"
                "  aaaaaaaaaaaaaaaaaa: ${   aaaaa  +  //\n"
                "                        bbbb }`;");
   verifyFormat("var f = `\n"
                "  aaaaaaaaaaaaaaaaaa: ${\n"
-               "                        someFunction(\n"
-               "                            aaaaa +  //\n"
-               "                            bbbb)\n"
-               "                      }`;",
+               "    someFunction(\n"
+               "        aaaaa +  //\n"
+               "        bbbb)}`;",
                "var f  =  `\n"
                "  aaaaaaaaaaaaaaaaaa: ${someFunction (\n"
                "                            aaaaa  +   //\n"
@@ -1817,9 +1823,9 @@ TEST_F(FormatTestJS, TemplateStringMultiLineExpression) {
   // It might be preferable to wrap before "someFunction".
   verifyFormat("var f = `\n"
                "  aaaaaaaaaaaaaaaaaa: ${someFunction({\n"
-               "                          aaaa: aaaaa,\n"
-               "                          bbbb: bbbbb,\n"
-               "                        })}`;",
+               "  aaaa: aaaaa,\n"
+               "  bbbb: bbbbb,\n"
+               "})}`;",
                "var f  =  `\n"
                "  aaaaaaaaaaaaaaaaaa: ${someFunction ({\n"
                "                          aaaa:  aaaaa,\n"

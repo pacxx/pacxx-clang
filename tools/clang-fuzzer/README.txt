@@ -29,6 +29,11 @@ Example:
     -DLLVM_USE_SANITIZE_COVERAGE=YES -DLLVM_USE_SANITIZER=Address
   ninja clang-fuzzer
 
+======================
+ Running clang-fuzzer
+======================
+  bin/clang-fuzzer CORPUS_DIR
+
 
 =======================================================
  Building clang-proto-fuzzer (Linux-only instructions)
@@ -59,15 +64,19 @@ Example:
     -DCLANG_ENABLE_PROTO_FUZZER=ON
   ninja clang-proto-fuzzer clang-proto-to-cxx
 
+This directory also contains a Dockerfile which sets up all required
+dependencies and builds the fuzzers.
 
-=====================
- Running the fuzzers
-=====================
-clang-fuzzer:
-  bin/clang-fuzzer CORPUS_DIR
-
-clang-proto-fuzzer:
+============================
+ Running clang-proto-fuzzer
+============================
   bin/clang-proto-fuzzer CORPUS_DIR
 
-Translating a clang-proto-fuzzer corpus output to C++:
+Arguments can be specified after -ignore_remaining_args=1 to modify the compiler
+invocation.  For example, the following command line will fuzz LLVM with a
+custom optimization level and target triple:
+  bin/clang-proto-fuzzer CORPUS_DIR -ignore_remaining_args=1 -O3 -triple \
+      arm64apple-ios9
+
+To translate a clang-proto-fuzzer corpus output to C++:
   bin/clang-proto-to-cxx CORPUS_OUTPUT_FILE

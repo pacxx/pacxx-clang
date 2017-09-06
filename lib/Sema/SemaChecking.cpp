@@ -99,6 +99,28 @@ static bool SemaBuiltinAnnotation(Sema &S, CallExpr *TheCall) {
   return false;
 }
 
+static bool SemaBuiltinMSVCAnnotation(Sema &S, CallExpr *TheCall) {
+  // We need at least one argument.
+  if (TheCall->getNumArgs() < 1) {
+    S.Diag(TheCall->getLocEnd(), diag::err_typecheck_call_too_few_args_at_least)
+        << 0 << 1 << TheCall->getNumArgs()
+        << TheCall->getCallee()->getSourceRange();
+    return true;
+  }
+
+  // All arguments should be wide string literals.
+  for (Expr *Arg : TheCall->arguments()) {
+    auto *Literal = dyn_cast<StringLiteral>(Arg->IgnoreParenCasts());
+    if (!Literal || !Literal->isWide()) {
+      S.Diag(Arg->getLocStart(), diag::err_msvc_annotation_wide_str)
+          << Arg->getSourceRange();
+      return true;
+    }
+  }
+
+  return false;
+}
+
 /// Check that the argument to __builtin_addressof is a glvalue, and set the
 /// result type to the corresponding pointer type.
 static bool SemaBuiltinAddressof(Sema &S, CallExpr *TheCall) {
@@ -1000,6 +1022,10 @@ Sema::CheckBuiltinFunctionCall(FunctionDecl *FDecl, unsigned BuiltinID,
   case Builtin::BI##ID: \
     return SemaAtomicOpsOverloaded(TheCallResult, AtomicExpr::AO##ID);
 #include "clang/Basic/Builtins.def"
+  case Builtin::BI__annotation:
+    if (SemaBuiltinMSVCAnnotation(*this, TheCall))
+      return ExprError();
+    break;
   case Builtin::BI__builtin_annotation:
     if (SemaBuiltinAnnotation(*this, TheCall))
       return ExprError();
@@ -1841,6 +1867,26 @@ static bool SemaBuiltinCpuSupports(Sema &S, CallExpr *TheCall) {
   return false;
 }
 
+/// SemaBuiltinCpuIs - Handle __builtin_cpu_is(char *).
+/// This checks that the target supports __builtin_cpu_is and
+/// that the string argument is constant and valid.
+static bool SemaBuiltinCpuIs(Sema &S, CallExpr *TheCall) {
+  Expr *Arg = TheCall->getArg(0);
+
+  // Check if the argument is a string literal.
+  if (!isa<StringLiteral>(Arg->IgnoreParenImpCasts()))
+    return S.Diag(TheCall->getLocStart(), diag::err_expr_not_string_literal)
+           << Arg->getSourceRange();
+
+  // Check the contents of the string.
+  StringRef Feature =
+      cast<StringLiteral>(Arg->IgnoreParenImpCasts())->getString();
+  if (!S.Context.getTargetInfo().validateCpuIs(Feature))
+    return S.Diag(TheCall->getLocStart(), diag::err_invalid_cpu_is)
+           << Arg->getSourceRange();
+  return false;
+}
+
 // Check if the rounding mode is legal.
 bool Sema::CheckX86BuiltinRoundingOrSAE(unsigned BuiltinID, CallExpr *TheCall) {
   // Indicates if this instruction has rounding control or just SAE.
@@ -2153,6 +2199,9 @@ bool Sema::CheckX86BuiltinGatherScatterScale(unsigned BuiltinID,
 bool Sema::CheckX86BuiltinFunctionCall(unsigned BuiltinID, CallExpr *TheCall) {
   if (BuiltinID == X86::BI__builtin_cpu_supports)
     return SemaBuiltinCpuSupports(*this, TheCall);
+
+  if (BuiltinID == X86::BI__builtin_cpu_is)
+    return SemaBuiltinCpuIs(*this, TheCall);
 
   // If the intrinsic has rounding or SAE make sure its valid.
   if (CheckX86BuiltinRoundingOrSAE(BuiltinID, TheCall))
@@ -3122,27 +3171,6 @@ ExprResult Sema::SemaAtomicOpsOverloaded(ExprResult TheCallResult,
     TheCall->setArg(i, Arg.get());
   }
 
-  Expr *Scope;
-  if (Form != Init) {
-    if (IsOpenCL) {
-      Scope = TheCall->getArg(TheCall->getNumArgs() - 1);
-      llvm::APSInt Result(32);
-      if (!Scope->isIntegerConstantExpr(Result, Context))
-        Diag(Scope->getLocStart(),
-             diag::err_atomic_op_has_non_constant_synch_scope)
-            << Scope->getSourceRange();
-      else if (!isValidSyncScopeValue(Result.getZExtValue()))
-        Diag(Scope->getLocStart(), diag::err_atomic_op_has_invalid_synch_scope)
-            << Scope->getSourceRange();
-    } else {
-      Scope = IntegerLiteral::Create(
-          Context,
-          llvm::APInt(Context.getTypeSize(Context.IntTy),
-                      static_cast<unsigned>(SyncScope::OpenCLAllSVMDevices)),
-          Context.IntTy, SourceLocation());
-    }
-  }
-
   // Permute the arguments into a 'consistent' order.
   SmallVector<Expr*, 5> SubExprs;
   SubExprs.push_back(Ptr);
@@ -3153,33 +3181,28 @@ ExprResult Sema::SemaAtomicOpsOverloaded(ExprResult TheCallResult,
     break;
   case Load:
     SubExprs.push_back(TheCall->getArg(1)); // Order
-    SubExprs.push_back(Scope);              // Scope
     break;
   case LoadCopy:
   case Copy:
   case Arithmetic:
   case Xchg:
     SubExprs.push_back(TheCall->getArg(2)); // Order
-    SubExprs.push_back(Scope);              // Scope
     SubExprs.push_back(TheCall->getArg(1)); // Val1
     break;
   case GNUXchg:
     // Note, AtomicExpr::getVal2() has a special case for this atomic.
     SubExprs.push_back(TheCall->getArg(3)); // Order
-    SubExprs.push_back(Scope);              // Scope
     SubExprs.push_back(TheCall->getArg(1)); // Val1
     SubExprs.push_back(TheCall->getArg(2)); // Val2
     break;
   case C11CmpXchg:
     SubExprs.push_back(TheCall->getArg(3)); // Order
-    SubExprs.push_back(Scope);              // Scope
     SubExprs.push_back(TheCall->getArg(1)); // Val1
     SubExprs.push_back(TheCall->getArg(4)); // OrderFail
     SubExprs.push_back(TheCall->getArg(2)); // Val2
     break;
   case GNUCmpXchg:
     SubExprs.push_back(TheCall->getArg(4)); // Order
-    SubExprs.push_back(Scope);              // Scope
     SubExprs.push_back(TheCall->getArg(1)); // Val1
     SubExprs.push_back(TheCall->getArg(5)); // OrderFail
     SubExprs.push_back(TheCall->getArg(2)); // Val2
@@ -3194,6 +3217,17 @@ ExprResult Sema::SemaAtomicOpsOverloaded(ExprResult TheCallResult,
       Diag(SubExprs[1]->getLocStart(),
            diag::warn_atomic_op_has_invalid_memory_order)
           << SubExprs[1]->getSourceRange();
+  }
+
+  if (auto ScopeModel = AtomicExpr::getScopeModel(Op)) {
+    auto *Scope = TheCall->getArg(TheCall->getNumArgs() - 1);
+    llvm::APSInt Result(32);
+    if (Scope->isIntegerConstantExpr(Result, Context) &&
+        !ScopeModel->isValid(Result.getZExtValue())) {
+      Diag(Scope->getLocStart(), diag::err_atomic_op_has_invalid_synch_scope)
+          << Scope->getSourceRange();
+    }
+    SubExprs.push_back(Scope);
   }
 
   AtomicExpr *AE = new (Context) AtomicExpr(TheCall->getCallee()->getLocStart(),

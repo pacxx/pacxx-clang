@@ -5317,6 +5317,22 @@ auto ValidPACXXKernelLambda(CXXRecordDecl *RDecl, Sema &S) {
                              << cap.getCapturedVar() << RDecl->getSourceRange());
     }
 
+    auto type = cap.getCapturedVar()->getTypeSourceInfo()->getTypeLoc().getTypePtr();
+    auto recordType = type->getAs<clang::RecordType>();
+
+    // TODO: introspect base classes and check for virtual member functions
+
+    if (recordType) {
+      auto recordDecl = recordType->getDecl();
+      for (auto field : recordDecl->fields()) {
+        if (field->getType()->isPointerType()) {
+          if (!field->getType().isDeviceType())
+            return ExprError(S.Diag(cap.getLocation(), diag::err_pacxx_lambda_captures_unqual_record_field)
+                                 << cap.getCapturedVar() << RDecl->getSourceRange());
+        }
+      }
+    }
+
     if (cap.getCaptureKind() == LambdaCaptureKind::LCK_ByRef) {
       return ExprError(S.Diag(cap.getLocation(), diag::err_pacxx_lambda_capture_by_ref)
                            << cap.getCapturedVar() << RDecl->getSourceRange());

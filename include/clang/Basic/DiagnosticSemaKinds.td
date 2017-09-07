@@ -9266,6 +9266,8 @@ def warn_pacxx_device_memory_on_wrong_type : Warning<
   "[[pacxx::device_memory]] is only viable on pointer types, the qualifier is ignored">;
 def err_pacxx_lambda_captures_unqual_pointer : Error<
   "a lambda used in a PACXX kernel is not allowed to capture pointers not carrying the [[pacxx::device_memory]] qualifier: %0">;
+def err_pacxx_lambda_captures_unqual_record_field : Error<
+  "a lambda used in a PACXX kernel is not allowed to capture record types holding a pointer or reference as field which is not carrying the [[pacxx::device_memory]] qualifier: %0">;
 def err_pacxx_lambda_captures_object_with_unqual_pointer : Error<
   "a lambda used in a PACXX kernel is not allowed to capture objects carrying pointers not qualified with [[pacxx::device_memory]] qualifier: %0">;
 def warn_pacxx_device_memory_dropped_due_assign : Warning<

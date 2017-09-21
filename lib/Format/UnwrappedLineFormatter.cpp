@@ -164,8 +164,7 @@ public:
       return nullptr;
     const AnnotatedLine *Current = *Next;
     IndentTracker.nextLine(*Current);
-    unsigned MergedLines =
-        tryFitMultipleLinesInOne(IndentTracker, Next, End);
+    unsigned MergedLines = tryFitMultipleLinesInOne(IndentTracker, Next, End);
     if (MergedLines > 0 && Style.ColumnLimit == 0)
       // Disallow line merging if there is a break at the start of one of the
       // input lines.
@@ -228,14 +227,16 @@ private:
 
       if (Tok && Tok->getNamespaceToken())
         return !Style.BraceWrapping.SplitEmptyNamespace && EmptyBlock
-            ? tryMergeSimpleBlock(I, E, Limit) : 0;
+                   ? tryMergeSimpleBlock(I, E, Limit)
+                   : 0;
 
       if (Tok && Tok->is(tok::kw_typedef))
         Tok = Tok->getNextNonComment();
       if (Tok && Tok->isOneOf(tok::kw_class, tok::kw_struct, tok::kw_union,
-                              Keywords.kw_interface))
+                              tok::kw_extern, Keywords.kw_interface))
         return !Style.BraceWrapping.SplitEmptyRecord && EmptyBlock
-            ? tryMergeSimpleBlock(I, E, Limit) : 0;
+                   ? tryMergeSimpleBlock(I, E, Limit)
+                   : 0;
     }
 
     // FIXME: TheLine->Level != 0 might or might not be the right check to do.
@@ -310,8 +311,8 @@ private:
     // Try to merge a block with left brace wrapped that wasn't yet covered
     if (TheLine->Last->is(tok::l_brace)) {
       return !Style.BraceWrapping.AfterFunction ||
-             (I[1]->First->is(tok::r_brace) &&
-              !Style.BraceWrapping.SplitEmptyRecord)
+                     (I[1]->First->is(tok::r_brace) &&
+                      !Style.BraceWrapping.SplitEmptyRecord)
                  ? tryMergeSimpleBlock(I, E, Limit)
                  : 0;
     }
@@ -848,7 +849,8 @@ private:
 
   /// \brief The BFS queue type.
   typedef std::priority_queue<QueueItem, std::vector<QueueItem>,
-                              std::greater<QueueItem>> QueueType;
+                              std::greater<QueueItem>>
+      QueueType;
 
   /// \brief Analyze the entire solution space starting from \p InitialState.
   ///
@@ -1084,7 +1086,7 @@ UnwrappedLineFormatter::format(const SmallVectorImpl<AnnotatedLine *> &Lines,
 void UnwrappedLineFormatter::formatFirstToken(const AnnotatedLine &Line,
                                               const AnnotatedLine *PreviousLine,
                                               unsigned Indent) {
-  FormatToken& RootToken = *Line.First;
+  FormatToken &RootToken = *Line.First;
   if (RootToken.is(tok::eof)) {
     unsigned Newlines = std::min(RootToken.NewlinesBefore, 1u);
     Whitespaces->replaceWhitespace(RootToken, Newlines, /*Spaces=*/0,

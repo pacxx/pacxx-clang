@@ -9101,7 +9101,7 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
         D.isFunctionDefinition());
   }
 
-  if (getLangOpts().CUDA) {
+  if (getLangOpts().CUDA || getLangOpts().PACXX) {
     IdentifierInfo *II = NewFD->getIdentifier();
     if (II && II->isStr("cudaConfigureCall") && !NewFD->isInvalidDecl() &&
         NewFD->getDeclContext()->getRedeclContext()->isTranslationUnit()) {

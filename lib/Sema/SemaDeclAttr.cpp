@@ -4116,6 +4116,7 @@ static void handleSharedAttr(Sema &S, Decl *D, const AttributeList &Attr) {
   if (S.getLangOpts().CUDA && VD->hasLocalStorage() &&
       S.CUDADiagIfHostCode(Attr.getLoc(), diag::err_cuda_host_shared)
           << S.CurrentCUDATarget())
+
     return;
   D->addAttr(::new (S.Context) CUDASharedAttr(
       Attr.getRange(), S.Context, Attr.getAttributeSpellingListIndex()));
@@ -5944,7 +5945,6 @@ static void handleOpenCLAccessAttr(Sema &S, Decl *D,
 
 static void handlePACXXTargetAttr(Sema &S, Decl *D,
                                         const AttributeList &Attr) {
-
   if (!checkAttributeAtLeastNumArgs(S, Attr, 1))
     return;
 
@@ -5966,8 +5966,6 @@ static void handlePACXXTargetAttr(Sema &S, Decl *D,
 
 static void handlePACXXKernelAttr(Sema &S, Decl *D,
                                   const AttributeList &Attr) {
-
-
   D->addAttr(::new (S.Context) PACXXKernelAttr(Attr.getRange(),
                                                S.Context,
                                                Attr.getAttributeSpellingListIndex()));

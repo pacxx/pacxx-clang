@@ -5488,15 +5488,18 @@ Sema::BuildResolvedCallExpr(Expr *Fn, NamedDecl *NDecl,
 
   if (getLangOpts().PACXX) {
     if (FDecl && FDecl->hasAttr<PACXXKernelAttr>()) {
-
-      auto QTy = FDecl->getTemplateSpecializationArgs()->get(0).getAsType();
-      auto RDecl = QTy->getAsCXXRecordDecl();
-      // Check if the provided functor is a lambda
-      if (RDecl && RDecl->isLambda()){
-        // validate that the lambda is suitable for PACXX
-        auto Result = ValidPACXXKernelLambda(RDecl, *this);
-        if (Result.isInvalid())
-          return Result;
+      if (FDecl->isFunctionTemplateSpecialization()){
+        if (FDecl->getTemplateSpecializationArgs()->get(0).getKind() == TemplateArgument::ArgKind::Type){
+          auto QTy = FDecl->getTemplateSpecializationArgs()->get(0).getAsType();
+          auto RDecl = QTy->getAsCXXRecordDecl();
+          // Check if the provided functor is a lambda
+          if (RDecl && RDecl->isLambda()){
+            // validate that the lambda is suitable for PACXX
+            auto Result = ValidPACXXKernelLambda(RDecl, *this);
+            if (Result.isInvalid())
+              return Result;
+          }
+        }
       }
     }
   }

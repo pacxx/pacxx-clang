@@ -127,7 +127,7 @@ CodeGenModule::CodeGenModule(ASTContext &C, const HeaderSearchOptions &HSO,
     createOpenCLRuntime();
   if (LangOpts.OpenMP)
     createOpenMPRuntime();
-  if (LangOpts.CUDA)
+  if (LangOpts.CUDA || LangOpts.PACXX)
     createCUDARuntime();
 
   // Enable TBAA unless it's suppressed. ThreadSanitizer needs TBAA even at O0.

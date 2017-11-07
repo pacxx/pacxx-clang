@@ -2788,45 +2788,45 @@ def InternalLinkage : InheritableAttr {
 
 
 def PACXXDevice : InheritableAttr {
-  let Spellings = [CXX11<"pacxx", "device">];
+  let Spellings = [CXX11<"pacxx", "device">, GNU<"pacxx_device">];
   let Subjects = SubjectList<[Var]>;
   let Documentation = [Undocumented];
 }
 
 def PACXXConstant : InheritableAttr {
-  let Spellings = [CXX11<"pacxx", "constant">];
+  let Spellings = [CXX11<"pacxx", "constant">, GNU<"pacxx_constant">];
   let Subjects = SubjectList<[Var]>;
   let Documentation = [Undocumented];
 }
 
 def PACXXKernel : Attr {
-  let Spellings = [CXX11<"pacxx", "kernel">];
+  let Spellings = [CXX11<"pacxx", "kernel">, GNU<"pacxx_kernel">];
   let Subjects = SubjectList<[Function]>;
   let Args = [VariadicExprArgument<"Args">];
   let Documentation = [Undocumented];
 }
 
 def PACXXReflection : Attr {
-  let Spellings = [CXX11<"pacxx", "staging">];
+  let Spellings = [CXX11<"pacxx", "staging">, GNU<"pacxx_staging">];
   let Subjects = SubjectList<[Function]>;
   let Args = [VariadicExprArgument<"Args">];
   let Documentation = [Undocumented];
 }
 
 def PACXXShared : InheritableAttr {
-  let Spellings = [CXX11<"pacxx", "shared">];
+  let Spellings = [CXX11<"pacxx", "shared">, GNU<"pacxx_shared">];
   let Subjects = SubjectList<[Var]>;
   let Documentation = [Undocumented];
 }
 
 def PACXXDump : InheritableAttr {
-  let Spellings = [CXX11<"pacxx", "dump">];
+  let Spellings = [CXX11<"pacxx", "dump">, GNU<"pacxx_dump">];
   let Subjects = SubjectList<[Function]>;
   let Documentation = [Undocumented];
 }
 
 def PACXXTarget : InheritableAttr {
-  let Spellings = [CXX11<"pacxx", "target">];
+  let Spellings = [CXX11<"pacxx", "target">,  GNU<"pacxx_target">];
   let Subjects = SubjectList<[Function]>;
   let Args = [VariadicExprArgument<"Args">];
   let Documentation = [Undocumented];

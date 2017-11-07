@@ -3034,7 +3034,7 @@ LexNextToken:
   // Read a character, advancing over it.
   char Char = getAndAdvanceChar(CurPtr, Result);
   tok::TokenKind Kind;
-
+  bool SeenCUDACall = false;
   switch (Char) {
   case 0:  // Null.
     // Found end of file?
@@ -3511,8 +3511,9 @@ LexNextToken:
         // If this is '<<<<' and we're in a Perforce-style conflict marker,
         // ignore it.
         goto LexNextToken;
-      } else if (LangOpts.CUDA && After == '<') {
+      } else if ((LangOpts.CUDA || LangOpts.PACXX) && After == '<') {
         Kind = tok::lesslessless;
+        SeenCUDACall = true; 
         CurPtr = ConsumeChar(ConsumeChar(CurPtr, SizeTmp, Result),
                              SizeTmp2, Result);
       } else {
@@ -3569,8 +3570,9 @@ LexNextToken:
       } else if (After == '>' && HandleEndOfConflictMarker(CurPtr-1)) {
         // If this is '>>>>>>>' and we're in a conflict marker, ignore it.
         goto LexNextToken;
-      } else if (LangOpts.CUDA && After == '>') {
+      } else if ((LangOpts.CUDA || LangOpts.PACXX) && SeenCUDACall && After == '>') {
         Kind = tok::greatergreatergreater;
+        SeenCUDACall = false;
         CurPtr = ConsumeChar(ConsumeChar(CurPtr, SizeTmp, Result),
                              SizeTmp2, Result);
       } else {

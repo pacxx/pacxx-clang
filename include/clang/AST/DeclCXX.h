@@ -838,7 +838,10 @@ public:
 
   /// \brief \c true if a defaulted destructor for this class would be deleted.
   bool defaultedDestructorIsDeleted() const {
-    return !data().DefaultedDestructorIsDeleted;
+    assert((!needsOverloadResolutionForDestructor() ||
+            (data().DeclaredSpecialMembers & SMF_Destructor)) &&
+           "this property has not yet been computed by Sema");
+    return data().DefaultedDestructorIsDeleted;
   }
 
   /// \brief \c true if we know for sure that this class has a single,
@@ -983,6 +986,15 @@ public:
             needsOverloadResolutionForMoveConstructor()) &&
            "move constructor should not be deleted");
     data().DefaultedMoveConstructorIsDeleted = true;
+  }
+
+  /// \brief Set that we attempted to declare an implicit destructor,
+  /// but overload resolution failed so we deleted it.
+  void setImplicitDestructorIsDeleted() {
+    assert((data().DefaultedDestructorIsDeleted ||
+            needsOverloadResolutionForDestructor()) &&
+           "destructor should not be deleted");
+    data().DefaultedDestructorIsDeleted = true;
   }
 
   /// \brief Determine whether this class should get an implicit move
@@ -1831,6 +1843,10 @@ public:
     return getLambdaData().MethodTyInfo;
   }
 
+  // \brief Determine whether this type is an Interface Like type for
+  // __interface inheritence purposes.
+  bool isInterfaceLike() const;
+
   static bool classof(const Decl *D) { return classofKind(D->getKind()); }
   static bool classofKind(Kind K) {
     return K >= firstCXXRecord && K <= lastCXXRecord;
@@ -1865,6 +1881,10 @@ private:
     if (EndLocation.isValid())
       setRangeEnd(EndLocation);
     IsExplicitSpecified = IsExplicit;
+
+    // IsCopyDeductionCandidate is a union variant member, so ensure it is the
+    // active member by storing to it.
+    IsCopyDeductionCandidate = false; 
   }
 
 public:
@@ -1886,6 +1906,12 @@ public:
   TemplateDecl *getDeducedTemplate() const {
     return getDeclName().getCXXDeductionGuideTemplate();
   }
+
+  void setIsCopyDeductionCandidate() {
+    IsCopyDeductionCandidate = true;
+  }
+
+  bool isCopyDeductionCandidate() const { return IsCopyDeductionCandidate; }
 
   // Implement isa/cast/dyncast/etc.
   static bool classof(const Decl *D) { return classofKind(D->getKind()); }
@@ -2550,7 +2576,10 @@ public:
 class CXXDestructorDecl : public CXXMethodDecl {
   void anchor() override;
 
+  // FIXME: Don't allocate storage for these except in the first declaration
+  // of a virtual destructor.
   FunctionDecl *OperatorDelete;
+  Expr *OperatorDeleteThisArg;
 
   CXXDestructorDecl(ASTContext &C, CXXRecordDecl *RD, SourceLocation StartLoc,
                     const DeclarationNameInfo &NameInfo,
@@ -2558,7 +2587,7 @@ class CXXDestructorDecl : public CXXMethodDecl {
                     bool isInline, bool isImplicitlyDeclared)
     : CXXMethodDecl(CXXDestructor, C, RD, StartLoc, NameInfo, T, TInfo,
                     SC_None, isInline, /*isConstexpr=*/false, SourceLocation()),
-      OperatorDelete(nullptr) {
+      OperatorDelete(nullptr), OperatorDeleteThisArg(nullptr) {
     setImplicit(isImplicitlyDeclared);
   }
 
@@ -2571,9 +2600,12 @@ public:
                                    bool isImplicitlyDeclared);
   static CXXDestructorDecl *CreateDeserialized(ASTContext & C, unsigned ID);
 
-  void setOperatorDelete(FunctionDecl *OD);
+  void setOperatorDelete(FunctionDecl *OD, Expr *ThisArg);
   const FunctionDecl *getOperatorDelete() const {
     return getCanonicalDecl()->OperatorDelete;
+  }
+  Expr *getOperatorDeleteThisArg() const {
+    return getCanonicalDecl()->OperatorDeleteThisArg;
   }
 
   CXXDestructorDecl *getCanonicalDecl() override {

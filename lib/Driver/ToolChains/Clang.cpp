@@ -273,21 +273,6 @@ static void ParseMRecip(const Driver &D, const ArgList &Args,
   OutStrings.push_back(Args.MakeArgString(Out));
 }
 
-static void getHexagonTargetFeatures(const ArgList &Args,
-                                     std::vector<StringRef> &Features) {
-  handleTargetFeaturesGroup(Args, Features,
-                            options::OPT_m_hexagon_Features_Group);
-
-  bool UseLongCalls = false;
-  if (Arg *A = Args.getLastArg(options::OPT_mlong_calls,
-                               options::OPT_mno_long_calls)) {
-    if (A->getOption().matches(options::OPT_mlong_calls))
-      UseLongCalls = true;
-  }
-
-  Features.push_back(UseLongCalls ? "+long-calls" : "-long-calls");
-}
-
 static void getWebAssemblyTargetFeatures(const ArgList &Args,
                                          std::vector<StringRef> &Features) {
   handleTargetFeaturesGroup(Args, Features, options::OPT_m_wasm_Features_Group);
@@ -349,7 +334,7 @@ static void getTargetFeatures(const ToolChain &TC, const llvm::Triple &Triple,
     x86::getX86TargetFeatures(D, Triple, Args, Features);
     break;
   case llvm::Triple::hexagon:
-    getHexagonTargetFeatures(Args, Features);
+    hexagon::getHexagonTargetFeatures(D, Args, Features);
     break;
   case llvm::Triple::wasm32:
   case llvm::Triple::wasm64:
@@ -2616,6 +2601,38 @@ static void RenderModulesOptions(Compilation &C, const Driver &D,
   Args.AddLastArg(CmdArgs, options::OPT_fmodules_disable_diagnostic_validation);
 }
 
+static void RenderCharacterOptions(const ArgList &Args, const llvm::Triple &T,
+                                   ArgStringList &CmdArgs) {
+  // -fsigned-char is default.
+  if (const Arg *A = Args.getLastArg(options::OPT_fsigned_char,
+                                     options::OPT_fno_signed_char,
+                                     options::OPT_funsigned_char,
+                                     options::OPT_fno_unsigned_char)) {
+    if (A->getOption().matches(options::OPT_funsigned_char) ||
+        A->getOption().matches(options::OPT_fno_signed_char)) {
+      CmdArgs.push_back("-fno-signed-char");
+    }
+  } else if (!isSignedCharDefault(T)) {
+    CmdArgs.push_back("-fno-signed-char");
+  }
+
+  if (const Arg *A = Args.getLastArg(options::OPT_fshort_wchar,
+                                     options::OPT_fno_short_wchar)) {
+    if (A->getOption().matches(options::OPT_fshort_wchar)) {
+      CmdArgs.push_back("-fwchar-type=short");
+      CmdArgs.push_back("-fno-signed-wchar");
+    } else {
+      bool IsARM = T.isARM() || T.isThumb() || T.isAArch64();
+      CmdArgs.push_back("-fwchar-type=int");
+      if (IsARM && !(T.isOSWindows() || T.getOS() == llvm::Triple::NetBSD ||
+                     T.getOS() == llvm::Triple::OpenBSD))
+        CmdArgs.push_back("-fno-signed-wchar");
+      else
+        CmdArgs.push_back("-fsigned-wchar");
+    }
+  }
+}
+
 static void RenderObjCOptions(const ToolChain &TC, const Driver &D,
                               const llvm::Triple &T, const ArgList &Args,
                               ObjCRuntime &Runtime, bool InferCovariantReturns,
@@ -2816,8 +2833,6 @@ static void RenderDebugOptions(const ToolChain &TC, const Driver &D,
                                ArgStringList &CmdArgs,
                                codegenoptions::DebugInfoKind &DebugInfoKind,
                                const Arg *&SplitDWARFArg) {
-  bool IsPS4CPU = T.isPS4CPU();
-
   if (Args.hasFlag(options::OPT_fdebug_info_for_profiling,
                    options::OPT_fno_debug_info_for_profiling, false))
     CmdArgs.push_back("-fdebug-info-for-profiling");
@@ -2900,13 +2915,14 @@ static void RenderDebugOptions(const ToolChain &TC, const Driver &D,
   // And we handle flag -grecord-gcc-switches later with DWARFDebugFlags.
   Args.ClaimAllArgs(options::OPT_g_flags_Group);
 
-  // Column info is included by default for everything except PS4 and CodeView.
+  // Column info is included by default for everything except SCE and CodeView.
   // Clang doesn't track end columns, just starting columns, which, in theory,
   // is fine for CodeView (and PDB).  In practice, however, the Microsoft
   // debuggers don't handle missing end columns well, so it's better not to
   // include any column info.
   if (Args.hasFlag(options::OPT_gcolumn_info, options::OPT_gno_column_info,
-                   /*Default=*/ !IsPS4CPU && !(IsWindowsMSVC && EmitCodeView)))
+                   /*Default=*/!(IsWindowsMSVC && EmitCodeView) &&
+                       DebuggerTuning != llvm::DebuggerKind::SCE))
     CmdArgs.push_back("-dwarf-column-info");
 
   // FIXME: Move backend command line options to the module.
@@ -2952,15 +2968,14 @@ static void RenderDebugOptions(const ToolChain &TC, const Driver &D,
     CmdArgs.push_back("-debug-info-macro");
 
   // -ggnu-pubnames turns on gnu style pubnames in the backend.
-  if (Args.hasArg(options::OPT_ggnu_pubnames)) {
-    CmdArgs.push_back("-backend-option");
-    CmdArgs.push_back("-generate-gnu-dwarf-pub-sections");
-  }
+  if (Args.hasArg(options::OPT_ggnu_pubnames))
+    CmdArgs.push_back("-ggnu-pubnames");
 
   // -gdwarf-aranges turns on the emission of the aranges section in the
   // backend.
-  // Always enabled on the PS4.
-  if (Args.hasArg(options::OPT_gdwarf_aranges) || IsPS4CPU) {
+  // Always enabled for SCE tuning.
+  if (Args.hasArg(options::OPT_gdwarf_aranges) ||
+      DebuggerTuning == llvm::DebuggerKind::SCE) {
     CmdArgs.push_back("-backend-option");
     CmdArgs.push_back("-generate-arange-section");
   }
@@ -2970,6 +2985,15 @@ static void RenderDebugOptions(const ToolChain &TC, const Driver &D,
     CmdArgs.push_back("-backend-option");
     CmdArgs.push_back("-generate-type-units");
   }
+
+  // Decide how to render forward declarations of template instantiations.
+  // SCE wants full descriptions, others just get them in the name.
+  if (DebuggerTuning == llvm::DebuggerKind::SCE)
+    CmdArgs.push_back("-debug-forward-template-params");
+
+  // Do we need to explicitly import anonymous namespaces into the parent scope?
+  if (DebuggerTuning == llvm::DebuggerKind::SCE)
+    CmdArgs.push_back("-dwarf-explicit-import");
 
   RenderDebugInfoCompressionArgs(Args, CmdArgs, D);
 }
@@ -2999,6 +3023,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
           Inputs.size() == 1) &&
          "Unable to handle multiple inputs.");
 
+  const llvm::Triple *AuxTriple =
+      IsCuda ? getToolChain().getAuxTriple() : nullptr;
+
   bool IsWindowsGNU = RawTriple.isWindowsGNUEnvironment();
   bool IsWindowsCygnus = RawTriple.isWindowsCygwinEnvironment();
   bool IsWindowsMSVC = RawTriple.isWindowsMSVCEnvironment();
@@ -3008,7 +3035,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // mode (i.e., getToolchain().getTriple() is NVPTX, not Windows), we need to
   // pass Windows-specific flags to cc1.
   if (IsCuda) {
-    const llvm::Triple *AuxTriple = getToolChain().getAuxTriple();
     IsWindowsMSVC |= AuxTriple && AuxTriple->isWindowsMSVCEnvironment();
     IsWindowsGNU |= AuxTriple && AuxTriple->isWindowsGNUEnvironment();
     IsWindowsCygnus |= AuxTriple && AuxTriple->isWindowsCygwinEnvironment();
@@ -3344,6 +3370,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                     options::OPT_fno_optimize_sibling_calls))
     CmdArgs.push_back("-mdisable-tail-calls");
 
+  Args.AddLastArg(CmdArgs, options::OPT_ffine_grained_bitfield_accesses,
+                  options::OPT_fno_fine_grained_bitfield_accesses);
+
   // Handle segmented stacks.
   if (Args.hasArg(options::OPT_fsplit_stack))
     CmdArgs.push_back("-split-stacks");
@@ -3394,6 +3423,19 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-mpie-copy-relocations");
   }
 
+  if (Args.hasFlag(options::OPT_fno_plt, options::OPT_fplt, false)) {
+    CmdArgs.push_back("-fno-plt");
+  }
+
+  // -fhosted is default.
+  // TODO: Audit uses of KernelOrKext and see where it'd be more appropriate to
+  // use Freestanding.
+  bool Freestanding =
+      Args.hasFlag(options::OPT_ffreestanding, options::OPT_fhosted, false) ||
+      KernelOrKext;
+  if (Freestanding)
+    CmdArgs.push_back("-ffreestanding");
+
   // This is a coarse approximation of what llvm-gcc actually does, both
   // -fasynchronous-unwind-tables and -fnon-call-exceptions interact in more
   // complicated ways.
@@ -3402,7 +3444,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                    options::OPT_fno_asynchronous_unwind_tables,
                    (getToolChain().IsUnwindTablesDefault(Args) ||
                     getToolChain().getSanitizerArgs().needsUnwindTables()) &&
-                       !KernelOrKext);
+                       !Freestanding);
   if (Args.hasFlag(options::OPT_funwind_tables, options::OPT_fno_unwind_tables,
                    AsynchronousUnwindTables))
     CmdArgs.push_back("-munwind-tables");
@@ -3792,11 +3834,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   Args.AddLastArg(CmdArgs, options::OPT_ftlsmodel_EQ);
 
-  // -fhosted is default.
-  if (Args.hasFlag(options::OPT_ffreestanding, options::OPT_fhosted, false) ||
-      KernelOrKext)
-    CmdArgs.push_back("-ffreestanding");
-
   // Forward -f (flag) options which we can pass directly.
   Args.AddLastArg(CmdArgs, options::OPT_femit_all_decls);
   Args.AddLastArg(CmdArgs, options::OPT_fheinous_gnu_extensions);
@@ -3982,6 +4019,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-fcoroutines-ts");
   }
 
+  Args.AddLastArg(CmdArgs, options::OPT_fdouble_square_bracket_attributes,
+                  options::OPT_fno_double_square_bracket_attributes);
+
   bool HaveModules = false;
   RenderModulesOptions(C, D, Args, Input, Output, CmdArgs, HaveModules);
 
@@ -4007,22 +4047,12 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                    getToolChain().getArch() == llvm::Triple::hexagon))
     CmdArgs.push_back("-fshort-enums");
 
-  // -fsigned-char is default.
-  if (Arg *A = Args.getLastArg(
-          options::OPT_fsigned_char, options::OPT_fno_signed_char,
-          options::OPT_funsigned_char, options::OPT_fno_unsigned_char)) {
-    if (A->getOption().matches(options::OPT_funsigned_char) ||
-        A->getOption().matches(options::OPT_fno_signed_char)) {
-      CmdArgs.push_back("-fno-signed-char");
-    }
-  } else if (!isSignedCharDefault(RawTriple)) {
-    CmdArgs.push_back("-fno-signed-char");
-  }
+  RenderCharacterOptions(Args, AuxTriple ? *AuxTriple : RawTriple, CmdArgs);
 
   // -fuse-cxa-atexit is default.
   if (!Args.hasFlag(
           options::OPT_fuse_cxa_atexit, options::OPT_fno_use_cxa_atexit,
-          !IsWindowsCygnus && !IsWindowsGNU &&
+          !RawTriple.isOSWindows() &&
               RawTriple.getOS() != llvm::Triple::Solaris &&
               getToolChain().getArch() != llvm::Triple::hexagon &&
               getToolChain().getArch() != llvm::Triple::xcore &&
@@ -4064,7 +4094,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     if (const Arg *StdArg = Args.getLastArg(options::OPT__SLASH_std)) {
       LanguageStandard = llvm::StringSwitch<StringRef>(StdArg->getValue())
                              .Case("c++14", "-std=c++14")
-                             .Case("c++latest", "-std=c++1z")
+                             .Case("c++17", "-std=c++17")
+                             .Case("c++latest", "-std=c++2a")
                              .Default("");
       if (LanguageStandard.empty())
         D.Diag(clang::diag::warn_drv_unused_argument)
@@ -4189,12 +4220,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       !Args.hasFlag(options::OPT_mconstant_cfstrings,
                     options::OPT_mno_constant_cfstrings))
     CmdArgs.push_back("-fno-constant-cfstrings");
-
-  // -fshort-wchar default varies depending on platform; only
-  // pass if specified.
-  if (Arg *A = Args.getLastArg(options::OPT_fshort_wchar,
-                               options::OPT_fno_short_wchar))
-    A->render(Args, CmdArgs);
 
   // -fno-pascal-strings is default, only pass non-default.
   if (Args.hasFlag(options::OPT_fpascal_strings,
@@ -4864,7 +4889,9 @@ void Clang::AddClangCLArgs(const ArgList &Args, types::ID InputType,
 
   // Both /showIncludes and /E (and /EP) write to stdout. Allowing both
   // would produce interleaved output, so ignore /showIncludes in such cases.
-  if (!Args.hasArg(options::OPT_E) && !Args.hasArg(options::OPT__SLASH_EP))
+  if ((!Args.hasArg(options::OPT_E) && !Args.hasArg(options::OPT__SLASH_EP)) ||
+      (Args.hasArg(options::OPT__SLASH_P) &&
+       Args.hasArg(options::OPT__SLASH_EP) && !Args.hasArg(options::OPT_E)))
     if (Arg *A = Args.getLastArg(options::OPT_show_includes))
       A->render(Args, CmdArgs);
 
@@ -4953,7 +4980,8 @@ void Clang::AddClangCLArgs(const ArgList &Args, types::ID InputType,
   // Parse the default calling convention options.
   if (Arg *CCArg =
           Args.getLastArg(options::OPT__SLASH_Gd, options::OPT__SLASH_Gr,
-                          options::OPT__SLASH_Gz, options::OPT__SLASH_Gv)) {
+                          options::OPT__SLASH_Gz, options::OPT__SLASH_Gv,
+                          options::OPT__SLASH_Gregcall)) {
     unsigned DCCOptId = CCArg->getOption().getID();
     const char *DCCFlag = nullptr;
     bool ArchSupported = true;
@@ -4973,6 +5001,10 @@ void Clang::AddClangCLArgs(const ArgList &Args, types::ID InputType,
     case options::OPT__SLASH_Gv:
       ArchSupported = Arch == llvm::Triple::x86 || Arch == llvm::Triple::x86_64;
       DCCFlag = "-fdefault-calling-conv=vectorcall";
+      break;
+    case options::OPT__SLASH_Gregcall:
+      ArchSupported = Arch == llvm::Triple::x86 || Arch == llvm::Triple::x86_64;
+      DCCFlag = "-fdefault-calling-conv=regcall";
       break;
     }
 

@@ -1562,7 +1562,7 @@ void Parser::DiagnoseProhibitedAttributes(ParsedAttributesWithRange &attrs) {
 void Parser::ProhibitCXX11Attributes(ParsedAttributesWithRange &Attrs,
                                      unsigned DiagID) {
   for (AttributeList *Attr = Attrs.getList(); Attr; Attr = Attr->getNext()) {
-    if (!Attr->isCXX11Attribute())
+    if (!Attr->isCXX11Attribute() && !Attr->isC2xAttribute())
       continue;
     if (Attr->getKind() == AttributeList::AT_PACXXDeviceMemory) // PACXX MOD: Diag a better error message
       Diag(Attr->getLoc(), diag::warn_pacxx_device_memory_on_wrong_type)
@@ -2136,6 +2136,37 @@ Decl *Parser::ParseDeclarationAfterDeclarator(
 
 Decl *Parser::ParseDeclarationAfterDeclaratorAndAttributes(
     Declarator &D, const ParsedTemplateInfo &TemplateInfo, ForRangeInit *FRI) {
+  // RAII type used to track whether we're inside an initializer.
+  struct InitializerScopeRAII {
+    Parser &P;
+    Declarator &D;
+    Decl *ThisDecl;
+
+    InitializerScopeRAII(Parser &P, Declarator &D, Decl *ThisDecl)
+        : P(P), D(D), ThisDecl(ThisDecl) {
+      if (ThisDecl && P.getLangOpts().CPlusPlus) {
+        Scope *S = nullptr;
+        if (D.getCXXScopeSpec().isSet()) {
+          P.EnterScope(0);
+          S = P.getCurScope();
+        }
+        P.Actions.ActOnCXXEnterDeclInitializer(S, ThisDecl);
+      }
+    }
+    ~InitializerScopeRAII() { pop(); }
+    void pop() {
+      if (ThisDecl && P.getLangOpts().CPlusPlus) {
+        Scope *S = nullptr;
+        if (D.getCXXScopeSpec().isSet())
+          S = P.getCurScope();
+        P.Actions.ActOnCXXExitDeclInitializer(S, ThisDecl);
+        if (S)
+          P.ExitScope();
+      }
+      ThisDecl = nullptr;
+    }
+  };
+
   // Inform the current actions module that we just parsed this declarator.
   Decl *ThisDecl = nullptr;
   switch (TemplateInfo.Kind) {
@@ -2213,10 +2244,7 @@ Decl *Parser::ParseDeclarationAfterDeclaratorAndAttributes(
       else
         Diag(ConsumeToken(), diag::err_default_special_members);
     } else {
-      if (getLangOpts().CPlusPlus && D.getCXXScopeSpec().isSet()) {
-        EnterScope(0);
-        Actions.ActOnCXXEnterDeclInitializer(getCurScope(), ThisDecl);
-      }
+      InitializerScopeRAII InitScope(*this, D, ThisDecl);
 
       if (Tok.is(tok::code_completion)) {
         Actions.CodeCompleteInitializer(getCurScope(), ThisDecl);
@@ -2239,10 +2267,7 @@ Decl *Parser::ParseDeclarationAfterDeclaratorAndAttributes(
         FRI->RangeExpr = Init;
       }
 
-      if (getLangOpts().CPlusPlus && D.getCXXScopeSpec().isSet()) {
-        Actions.ActOnCXXExitDeclInitializer(getCurScope(), ThisDecl);
-        ExitScope();
-      }
+      InitScope.pop();
 
       if (Init.isInvalid()) {
         SmallVector<tok::TokenKind, 2> StopTokens;
@@ -2264,10 +2289,7 @@ Decl *Parser::ParseDeclarationAfterDeclaratorAndAttributes(
     ExprVector Exprs;
     CommaLocsTy CommaLocs;
 
-    if (getLangOpts().CPlusPlus && D.getCXXScopeSpec().isSet()) {
-      EnterScope(0);
-      Actions.ActOnCXXEnterDeclInitializer(getCurScope(), ThisDecl);
-    }
+    InitializerScopeRAII InitScope(*this, D, ThisDecl);
 
     llvm::function_ref<void()> ExprListCompleter;
     auto ThisVarDecl = dyn_cast_or_null<VarDecl>(ThisDecl);
@@ -2288,11 +2310,6 @@ Decl *Parser::ParseDeclarationAfterDeclaratorAndAttributes(
     if (ParseExpressionList(Exprs, CommaLocs, ExprListCompleter)) {
       Actions.ActOnInitializerError(ThisDecl);
       SkipUntil(tok::r_paren, StopAtSemi);
-
-      if (getLangOpts().CPlusPlus && D.getCXXScopeSpec().isSet()) {
-        Actions.ActOnCXXExitDeclInitializer(getCurScope(), ThisDecl);
-        ExitScope();
-      }
     } else {
       // Match the ')'.
       T.consumeClose();
@@ -2300,10 +2317,7 @@ Decl *Parser::ParseDeclarationAfterDeclaratorAndAttributes(
       assert(!Exprs.empty() && Exprs.size()-1 == CommaLocs.size() &&
              "Unexpected number of commas!");
 
-      if (getLangOpts().CPlusPlus && D.getCXXScopeSpec().isSet()) {
-        Actions.ActOnCXXExitDeclInitializer(getCurScope(), ThisDecl);
-        ExitScope();
-      }
+      InitScope.pop();
 
       ExprResult Initializer = Actions.ActOnParenListExpr(T.getOpenLocation(),
                                                           T.getCloseLocation(),
@@ -2316,17 +2330,11 @@ Decl *Parser::ParseDeclarationAfterDeclaratorAndAttributes(
     // Parse C++0x braced-init-list.
     Diag(Tok, diag::warn_cxx98_compat_generalized_initializer_lists);
 
-    if (D.getCXXScopeSpec().isSet()) {
-      EnterScope(0);
-      Actions.ActOnCXXEnterDeclInitializer(getCurScope(), ThisDecl);
-    }
+    InitializerScopeRAII InitScope(*this, D, ThisDecl);
 
     ExprResult Init(ParseBraceInitializer());
 
-    if (D.getCXXScopeSpec().isSet()) {
-      Actions.ActOnCXXExitDeclInitializer(getCurScope(), ThisDecl);
-      ExitScope();
-    }
+    InitScope.pop();
 
     if (Init.isInvalid()) {
       Actions.ActOnInitializerError(ThisDecl);
@@ -2922,7 +2930,7 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
 
     case tok::l_square:
     case tok::kw_alignas:
-      if (!getLangOpts().CPlusPlus11 || !isCXX11AttributeSpecifier())
+      if (!standardAttributesAllowed() || !isCXX11AttributeSpecifier())
         goto DoneWithDeclSpec;
 
       ProhibitAttributes(attrs);
@@ -3775,7 +3783,8 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
 /// semicolon.
 ///
 ///       struct-declaration:
-///         specifier-qualifier-list struct-declarator-list
+/// [C2x]   attributes-specifier-seq[opt]
+///           specifier-qualifier-list struct-declarator-list
 /// [GNU]   __extension__ struct-declaration
 /// [GNU]   specifier-qualifier-list
 ///       struct-declarator-list:
@@ -3798,6 +3807,11 @@ void Parser::ParseStructDeclaration(
     ConsumeToken();
     return ParseStructDeclaration(DS, FieldsCallback);
   }
+
+  // Parse leading attributes.
+  ParsedAttributesWithRange Attrs(AttrFactory);
+  MaybeParseCXX11Attributes(Attrs);
+  DS.takeAttributesFrom(Attrs);
 
   // Parse the common specifier-qualifiers-list piece.
   ParseSpecifierQualifierList(DS);
@@ -4409,9 +4423,11 @@ void Parser::ParseEnumBody(SourceLocation StartLoc, Decl *EnumDecl) {
     ParsedAttributesWithRange attrs(AttrFactory);
     MaybeParseGNUAttributes(attrs);
     ProhibitAttributes(attrs); // GNU-style attributes are prohibited.
-    if (getLangOpts().CPlusPlus11 && isCXX11AttributeSpecifier()) {
-      if (!getLangOpts().CPlusPlus1z)
-        Diag(Tok.getLocation(), diag::warn_cxx14_compat_attribute)
+    if (standardAttributesAllowed() && isCXX11AttributeSpecifier()) {
+      if (getLangOpts().CPlusPlus)
+        Diag(Tok.getLocation(), getLangOpts().CPlusPlus1z
+                                    ? diag::warn_cxx14_compat_ns_enum_attribute
+                                    : diag::ext_ns_enum_attribute)
             << 1 /*enumerator*/;
       ParseCXX11Attributes(attrs);
     }
@@ -5021,7 +5037,7 @@ void Parser::ParseTypeQualifierListOpt(
     DeclSpec &DS, unsigned AttrReqs, bool AtomicAllowed,
     bool IdentifierRequired,
     Optional<llvm::function_ref<void()>> CodeCompletionHandler) {
-  if (getLangOpts().CPlusPlus11 && (AttrReqs & AR_CXX11AttributesParsed) &&
+  if (standardAttributesAllowed() && (AttrReqs & AR_CXX11AttributesParsed) &&
       isCXX11AttributeSpecifier()) {
     ParsedAttributesWithRange attrs(AttrFactory);
     ParseCXX11Attributes(attrs);
@@ -5958,7 +5974,7 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
   SmallVector<SourceRange, 2> DynamicExceptionRanges;
   ExprResult NoexceptExpr;
   CachedTokens *ExceptionSpecTokens = nullptr;
-  ParsedAttributes FnAttrs(AttrFactory);
+  ParsedAttributesWithRange FnAttrs(AttrFactory);
   TypeResult TrailingReturnType;
 
   /* LocalEndLoc is the end location for the local FunctionTypeLoc.
@@ -5979,6 +5995,11 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
     RParenLoc = Tracker.getCloseLocation();
     LocalEndLoc = RParenLoc;
     EndLoc = RParenLoc;
+
+    // If there are attributes following the identifier list, parse them and 
+    // prohibit them.
+    MaybeParseCXX11Attributes(FnAttrs);
+    ProhibitAttributes(FnAttrs);
   } else {
     if (Tok.isNot(tok::r_paren))
       ParseParameterDeclarationClause(D, FirstArgAttrs, ParamInfo, 
@@ -5986,7 +6007,8 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
     else if (RequiresArg)
       Diag(Tok, diag::err_argument_required_after_attribute);
 
-    HasProto = ParamInfo.size() || getLangOpts().CPlusPlus;
+    HasProto = ParamInfo.size() || getLangOpts().CPlusPlus
+                                || getLangOpts().OpenCL;
 
     // If we have the closing ')', eat it.
     Tracker.consumeClose();
@@ -6084,6 +6106,8 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
         TrailingReturnType = ParseTrailingReturnType(Range);
         EndLoc = Range.getEnd();
       }
+    } else if (standardAttributesAllowed()) {
+      MaybeParseCXX11Attributes(FnAttrs);
     }
   }
 

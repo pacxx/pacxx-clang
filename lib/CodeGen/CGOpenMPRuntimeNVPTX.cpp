@@ -2253,7 +2253,7 @@ CGOpenMPRuntimeNVPTX::translateParameter(const FieldDecl *FD,
   ArgType = CGM.getContext().getPointerType(PointeeTy);
   QC.addRestrict();
   enum { NVPTX_local_addr = 5 };
-  QC.addAddressSpace(NVPTX_local_addr);
+  QC.addAddressSpace(getLangASFromTargetAS(NVPTX_local_addr));
   ArgType = QC.apply(CGM.getContext(), ArgType);
   return ImplicitParamDecl::Create(
       CGM.getContext(), /*DC=*/nullptr, NativeParam->getLocation(),
@@ -2273,10 +2273,10 @@ CGOpenMPRuntimeNVPTX::getParameterAddress(CodeGenFunction &CGF,
   const Type *NonQualTy = QC.strip(NativeParamType);
   QualType NativePointeeTy = cast<ReferenceType>(NonQualTy)->getPointeeType();
   unsigned NativePointeeAddrSpace =
-      NativePointeeTy.getQualifiers().getAddressSpace();
-  QualType TargetPointeeTy = TargetParam->getType()->getPointeeType();
+      CGF.getContext().getTargetAddressSpace(NativePointeeTy);
+  QualType TargetTy = TargetParam->getType();
   llvm::Value *TargetAddr = CGF.EmitLoadOfScalar(
-      LocalAddr, /*Volatile=*/false, TargetPointeeTy, SourceLocation());
+      LocalAddr, /*Volatile=*/false, TargetTy, SourceLocation());
   // First cast to generic.
   TargetAddr = CGF.Builder.CreatePointerBitCastOrAddrSpaceCast(
       TargetAddr, TargetAddr->getType()->getPointerElementType()->getPointerTo(
@@ -2287,7 +2287,7 @@ CGOpenMPRuntimeNVPTX::getParameterAddress(CodeGenFunction &CGF,
                       NativePointeeAddrSpace));
   Address NativeParamAddr = CGF.CreateMemTemp(NativeParamType);
   CGF.EmitStoreOfScalar(TargetAddr, NativeParamAddr, /*Volatile=*/false,
-                        NativeParam->getType());
+                        NativeParamType);
   return NativeParamAddr;
 }
 

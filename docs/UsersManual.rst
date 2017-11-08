@@ -107,7 +107,7 @@ Options to Control Error and Warning Messages
 
 .. option:: -Wno-error=foo
 
-  Turn warning "foo" into an warning even if :option:`-Werror` is specified.
+  Turn warning "foo" into a warning even if :option:`-Werror` is specified.
 
 .. option:: -Wfoo
 
@@ -677,7 +677,7 @@ Current limitations
 
 Other Options
 -------------
-Clang options that that don't fit neatly into other categories.
+Clang options that don't fit neatly into other categories.
 
 .. option:: -MV
 
@@ -1147,6 +1147,11 @@ are listed below.
    the behavior of sanitizers in the ``cfi`` group to allow checking
    of cross-DSO virtual and indirect calls.
 
+.. option:: -fsanitize-cfi-icall-generalize-pointers
+
+   Generalize pointers in return and argument types in function type signatures
+   checked by Control Flow Integrity indirect call checking. See
+   :doc:`ControlFlowIntegrity` for more details.
 
 .. option:: -fstrict-vtable-pointers
 

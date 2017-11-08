@@ -24,7 +24,6 @@
 #include "CGOpenMPRuntimeNVPTX.h"
 #include "CodeGenFunction.h"
 #include "CodeGenPGO.h"
-#include "CodeGenTBAA.h"
 #include "ConstantEmitter.h"
 #include "CoverageMappingGen.h"
 #include "TargetInfo.h"
@@ -61,6 +60,11 @@
 
 using namespace clang;
 using namespace CodeGen;
+
+static llvm::cl::opt<bool> LimitedCoverage(
+    "limited-coverage-experimental", llvm::cl::ZeroOrMore,
+    llvm::cl::desc("Emit limited coverage mapping information (experimental)"),
+    llvm::cl::init(false));
 
 static const char AnnotationSection[] = "llvm.metadata";
 
@@ -472,17 +476,11 @@ void CodeGenModule::Release() {
     getModule().addModuleFlag(llvm::Module::Warning, "Debug Info Version",
                               llvm::DEBUG_METADATA_VERSION);
 
-  // Width of wchar_t in bytes
-  uint64_t WCharWidth =
-      Context.getTypeSizeInChars(Context.getWideCharType()).getQuantity();
-  assert((LangOpts.ShortWChar ||
-          llvm::TargetLibraryInfoImpl::getTargetWCharSize(Target.getTriple()) ==
-              Target.getWCharWidth() / 8) &&
-         "LLVM wchar_t size out of sync");
-
   // We need to record the widths of enums and wchar_t, so that we can generate
   // the correct build attributes in the ARM backend. wchar_size is also used by
   // TargetLibraryInfo.
+  uint64_t WCharWidth =
+      Context.getTypeSizeInChars(Context.getWideCharType()).getQuantity();
   getModule().addModuleFlag(llvm::Module::Error, "wchar_size", WCharWidth);
 
   llvm::Triple::ArchType Arch = Context.getTargetInfo().getTriple().getArch();
@@ -575,16 +573,20 @@ void CodeGenModule::RefreshTypeCacheForClass(const CXXRecordDecl *RD) {
   Types.RefreshTypeCacheForClass(RD);
 }
 
-llvm::MDNode *CodeGenModule::getTBAAInfo(QualType QTy) {
+llvm::MDNode *CodeGenModule::getTBAATypeInfo(QualType QTy) {
   if (!TBAA)
     return nullptr;
-  return TBAA->getTBAAInfo(QTy);
+  return TBAA->getTypeInfo(QTy);
 }
 
-llvm::MDNode *CodeGenModule::getTBAAInfoForVTablePtr() {
+TBAAAccessInfo CodeGenModule::getTBAAAccessInfo(QualType AccessType) {
+  return TBAAAccessInfo(getTBAATypeInfo(AccessType));
+}
+
+TBAAAccessInfo CodeGenModule::getTBAAVTablePtrAccessInfo() {
   if (!TBAA)
-    return nullptr;
-  return TBAA->getTBAAInfoForVTablePtr();
+    return TBAAAccessInfo();
+  return TBAA->getVTablePtrAccessInfo();
 }
 
 llvm::MDNode *CodeGenModule::getTBAAStructInfo(QualType QTy) {
@@ -593,26 +595,37 @@ llvm::MDNode *CodeGenModule::getTBAAStructInfo(QualType QTy) {
   return TBAA->getTBAAStructInfo(QTy);
 }
 
-llvm::MDNode *CodeGenModule::getTBAAStructTagInfo(QualType BaseTy,
-                                                  llvm::MDNode *AccessN,
-                                                  uint64_t O) {
+llvm::MDNode *CodeGenModule::getTBAABaseTypeInfo(QualType QTy) {
   if (!TBAA)
     return nullptr;
-  return TBAA->getTBAAStructTagInfo(BaseTy, AccessN, O);
+  return TBAA->getBaseTypeInfo(QTy);
 }
 
-/// Decorate the instruction with a TBAA tag. For both scalar TBAA
-/// and struct-path aware TBAA, the tag has the same format:
-/// base type, access type and offset.
-/// When ConvertTypeToTag is true, we create a tag based on the scalar type.
+llvm::MDNode *CodeGenModule::getTBAAAccessTagInfo(TBAAAccessInfo Info) {
+  if (!TBAA)
+    return nullptr;
+  return TBAA->getAccessTagInfo(Info);
+}
+
+TBAAAccessInfo CodeGenModule::mergeTBAAInfoForCast(TBAAAccessInfo SourceInfo,
+                                                   TBAAAccessInfo TargetInfo) {
+  if (!TBAA)
+    return TBAAAccessInfo();
+  return TBAA->mergeTBAAInfoForCast(SourceInfo, TargetInfo);
+}
+
+TBAAAccessInfo
+CodeGenModule::mergeTBAAInfoForConditionalOperator(TBAAAccessInfo InfoA,
+                                                   TBAAAccessInfo InfoB) {
+  if (!TBAA)
+    return TBAAAccessInfo();
+  return TBAA->mergeTBAAInfoForConditionalOperator(InfoA, InfoB);
+}
+
 void CodeGenModule::DecorateInstructionWithTBAA(llvm::Instruction *Inst,
-                                                llvm::MDNode *TBAAInfo,
-                                                bool ConvertTypeToTag) {
-  if (ConvertTypeToTag && TBAA)
-    Inst->setMetadata(llvm::LLVMContext::MD_tbaa,
-                      TBAA->getTBAAScalarTagInfo(TBAAInfo));
-  else
-    Inst->setMetadata(llvm::LLVMContext::MD_tbaa, TBAAInfo);
+                                                TBAAAccessInfo TBAAInfo) {
+  if (llvm::MDNode *Tag = getTBAAAccessTagInfo(TBAAInfo))
+    Inst->setMetadata(llvm::LLVMContext::MD_tbaa, Tag);
 }
 
 void CodeGenModule::DecorateInstructionWithInvariantGroup(
@@ -1168,6 +1181,7 @@ void CodeGenModule::CreateFunctionTypeMetadata(const FunctionDecl *FD,
 
   llvm::Metadata *MD = CreateMetadataIdentifierForType(FD->getType());
   F->addTypeMetadata(0, MD);
+  F->addTypeMetadata(0, CreateMetadataIdentifierGeneralized(FD->getType()));
 
   // Emit a hash-based bit set entry for cross-DSO calls.
   if (CodeGenOpts.SanitizeCfiCrossDso)
@@ -1567,20 +1581,21 @@ void CodeGenModule::AddGlobalAnnotations(const ValueDecl *D,
     Annotations.push_back(EmitAnnotateAttr(GV, I, D->getLocation()));
 }
 
-bool CodeGenModule::isInSanitizerBlacklist(llvm::Function *Fn,
+bool CodeGenModule::isInSanitizerBlacklist(SanitizerMask Kind,
+                                           llvm::Function *Fn,
                                            SourceLocation Loc) const {
   const auto &SanitizerBL = getContext().getSanitizerBlacklist();
   // Blacklist by function name.
-  if (SanitizerBL.isBlacklistedFunction(Fn->getName()))
+  if (SanitizerBL.isBlacklistedFunction(Kind, Fn->getName()))
     return true;
   // Blacklist by location.
   if (Loc.isValid())
-    return SanitizerBL.isBlacklistedLocation(Loc);
+    return SanitizerBL.isBlacklistedLocation(Kind, Loc);
   // If location is unknown, this may be a compiler-generated function. Assume
   // it's located in the main file.
   auto &SM = Context.getSourceManager();
   if (const auto *MainFile = SM.getFileEntryForID(SM.getMainFileID())) {
-    return SanitizerBL.isBlacklistedFile(MainFile->getName());
+    return SanitizerBL.isBlacklistedFile(Kind, MainFile->getName());
   }
   return false;
 }
@@ -1589,13 +1604,14 @@ bool CodeGenModule::isInSanitizerBlacklist(llvm::GlobalVariable *GV,
                                            SourceLocation Loc, QualType Ty,
                                            StringRef Category) const {
   // For now globals can be blacklisted only in ASan and KASan.
-  if (!LangOpts.Sanitize.hasOneOf(
-          SanitizerKind::Address | SanitizerKind::KernelAddress))
+  const SanitizerMask EnabledAsanMask = LangOpts.Sanitize.Mask &
+      (SanitizerKind::Address | SanitizerKind::KernelAddress);
+  if (!EnabledAsanMask)
     return false;
   const auto &SanitizerBL = getContext().getSanitizerBlacklist();
-  if (SanitizerBL.isBlacklistedGlobal(GV->getName(), Category))
+  if (SanitizerBL.isBlacklistedGlobal(EnabledAsanMask, GV->getName(), Category))
     return true;
-  if (SanitizerBL.isBlacklistedLocation(Loc, Category))
+  if (SanitizerBL.isBlacklistedLocation(EnabledAsanMask, Loc, Category))
     return true;
   // Check global type.
   if (!Ty.isNull()) {
@@ -1607,7 +1623,7 @@ bool CodeGenModule::isInSanitizerBlacklist(llvm::GlobalVariable *GV,
     // We allow to blacklist only record types (classes, structs etc.)
     if (Ty->isRecordType()) {
       std::string TypeStr = Ty.getAsString(getContext().getPrintingPolicy());
-      if (SanitizerBL.isBlacklistedType(TypeStr, Category))
+      if (SanitizerBL.isBlacklistedType(EnabledAsanMask, TypeStr, Category))
         return true;
     }
   }
@@ -2297,7 +2313,8 @@ CodeGenModule::CreateRuntimeFunction(llvm::FunctionType *FTy, StringRef Name,
       F->setCallingConv(getRuntimeCC());
 
       if (!Local && getTriple().isOSBinFormatCOFF() &&
-          !getCodeGenOpts().LTOVisibilityPublicStd) {
+          !getCodeGenOpts().LTOVisibilityPublicStd &&
+          !getTriple().isWindowsGNUEnvironment()) {
         const FunctionDecl *FD = GetRuntimeFunctionDecl(Context, Name);
         if (!FD || FD->hasAttr<DLLImportAttr>()) {
           F->setDLLStorageClass(llvm::GlobalValue::DLLImportStorageClass);
@@ -2475,6 +2492,12 @@ CodeGenModule::GetOrCreateLLVMGlobal(StringRef MangledName,
       EmitGlobalVarDefinition(D);
     }
 
+    // Emit section information for extern variables.
+    if (D->hasExternalStorage()) {
+      if (const SectionAttr *SA = D->getAttr<SectionAttr>())
+        GV->setSection(SA->getName());
+    }
+
     // Handle XCore specific ABI requirements.
     if (getTriple().getArch() == llvm::Triple::xcore &&
         D->getLanguageLinkage() == CLanguageLinkage &&
@@ -2525,10 +2548,9 @@ CodeGenModule::GetOrCreateLLVMGlobal(StringRef MangledName,
     }
   }
 
-  auto ExpectedAS =
+  LangAS ExpectedAS =
       D ? D->getType().getAddressSpace()
-        : static_cast<unsigned>(LangOpts.OpenCL ? LangAS::opencl_global
-                                                : LangAS::Default);
+        : (LangOpts.OpenCL ? LangAS::opencl_global : LangAS::Default);
   assert(getContext().getTargetAddressSpace(ExpectedAS) ==
          Ty->getPointerAddressSpace());
   if (AddrSpace != ExpectedAS)
@@ -2667,11 +2689,10 @@ CharUnits CodeGenModule::GetTargetTypeStoreSize(llvm::Type *Ty) const {
       getDataLayout().getTypeStoreSizeInBits(Ty));
 }
 
-unsigned CodeGenModule::GetGlobalVarAddressSpace(const VarDecl *D) {
-  unsigned AddrSpace;
+LangAS CodeGenModule::GetGlobalVarAddressSpace(const VarDecl *D) {
+  LangAS AddrSpace = LangAS::Default;
   if (LangOpts.OpenCL) {
-    AddrSpace = D ? D->getType().getAddressSpace()
-                  : static_cast<unsigned>(LangAS::opencl_global);
+    AddrSpace = D ? D->getType().getAddressSpace() : LangAS::opencl_global;
     assert(AddrSpace == LangAS::opencl_global ||
            AddrSpace == LangAS::opencl_constant ||
            AddrSpace == LangAS::opencl_local ||
@@ -2688,7 +2709,7 @@ unsigned CodeGenModule::GetGlobalVarAddressSpace(const VarDecl *D) {
       return LangAS::cuda_device;
   }
   else if (LangOpts.PACXX) 
-    AddrSpace = 0;
+    AddrSpace = LangAS::Default;
 
   return getTargetCodeGenInfo().getGlobalVarAddressSpace(*this, D);
 }
@@ -3610,6 +3631,10 @@ CodeGenModule::GetAddrOfConstantCFString(const StringLiteral *Literal) {
   return ConstantAddress(GV, Alignment);
 }
 
+bool CodeGenModule::getExpressionLocationsEnabled() const {
+  return !CodeGenOpts.EmitCodeView || CodeGenOpts.DebugColumnInfo;
+}
+
 QualType CodeGenModule::getObjCFastEnumerationStateType() {
   if (ObjCFastEnumerationStateType.isNull()) {
     RecordDecl *D = Context.buildImplicitRecord("__objcFastEnumerationState");
@@ -3840,7 +3865,7 @@ ConstantAddress CodeGenModule::GetAddrOfGlobalTemporary(
       !EvalResult.hasSideEffects())
     Value = &EvalResult.Val;
 
-  unsigned AddrSpace =
+  LangAS AddrSpace =
       VD ? GetGlobalVarAddressSpace(VD) : MaterializedType.getAddressSpace();
 
   Optional<ConstantEmitter> emitter;
@@ -4063,6 +4088,13 @@ void CodeGenModule::EmitTopLevelDecl(Decl *D) {
   case Decl::Namespace:
     EmitDeclContext(cast<NamespaceDecl>(D));
     break;
+  case Decl::ClassTemplateSpecialization: {
+    const auto *Spec = cast<ClassTemplateSpecializationDecl>(D);
+    if (DebugInfo &&
+        Spec->getSpecializationKind() == TSK_ExplicitInstantiationDefinition &&
+        Spec->hasDefinition())
+      DebugInfo->completeTemplateDefinition(*Spec);
+  } LLVM_FALLTHROUGH;
   case Decl::CXXRecord:
     if (DebugInfo) {
       if (auto *ES = D->getASTContext().getExternalSource())
@@ -4249,15 +4281,6 @@ void CodeGenModule::EmitTopLevelDecl(Decl *D) {
     EmitOMPThreadPrivateDecl(cast<OMPThreadPrivateDecl>(D));
     break;
 
-  case Decl::ClassTemplateSpecialization: {
-    const auto *Spec = cast<ClassTemplateSpecializationDecl>(D);
-    if (DebugInfo &&
-        Spec->getSpecializationKind() == TSK_ExplicitInstantiationDefinition &&
-        Spec->hasDefinition())
-      DebugInfo->completeTemplateDefinition(*Spec);
-    break;
-  }
-
   case Decl::OMPDeclareReduction:
     EmitOMPDeclareReduction(cast<OMPDeclareReductionDecl>(D));
     break;
@@ -4283,6 +4306,9 @@ void CodeGenModule::AddDeferredUnusedCoverageMapping(Decl *D) {
   case Decl::CXXConstructor:
   case Decl::CXXDestructor: {
     if (!cast<FunctionDecl>(D)->doesThisDeclarationHaveABody())
+      return;
+    SourceManager &SM = getContext().getSourceManager();
+    if (LimitedCoverage && SM.getMainFileID() != SM.getFileID(D->getLocStart()))
       return;
     auto I = DeferredEmptyCoverageMappingDecls.find(D);
     if (I == DeferredEmptyCoverageMappingDecls.end())
@@ -4574,6 +4600,60 @@ llvm::Metadata *CodeGenModule::CreateMetadataIdentifierForType(QualType T) {
   return InternalId;
 }
 
+// Generalize pointer types to a void pointer with the qualifiers of the
+// originally pointed-to type, e.g. 'const char *' and 'char * const *'
+// generalize to 'const void *' while 'char *' and 'const char **' generalize to
+// 'void *'.
+static QualType GeneralizeType(ASTContext &Ctx, QualType Ty) {
+  if (!Ty->isPointerType())
+    return Ty;
+
+  return Ctx.getPointerType(
+      QualType(Ctx.VoidTy).withCVRQualifiers(
+          Ty->getPointeeType().getCVRQualifiers()));
+}
+
+// Apply type generalization to a FunctionType's return and argument types
+static QualType GeneralizeFunctionType(ASTContext &Ctx, QualType Ty) {
+  if (auto *FnType = Ty->getAs<FunctionProtoType>()) {
+    SmallVector<QualType, 8> GeneralizedParams;
+    for (auto &Param : FnType->param_types())
+      GeneralizedParams.push_back(GeneralizeType(Ctx, Param));
+
+    return Ctx.getFunctionType(
+        GeneralizeType(Ctx, FnType->getReturnType()),
+        GeneralizedParams, FnType->getExtProtoInfo());
+  }
+
+  if (auto *FnType = Ty->getAs<FunctionNoProtoType>())
+    return Ctx.getFunctionNoProtoType(
+        GeneralizeType(Ctx, FnType->getReturnType()));
+
+  llvm_unreachable("Encountered unknown FunctionType");
+}
+
+llvm::Metadata *CodeGenModule::CreateMetadataIdentifierGeneralized(QualType T) {
+  T = GeneralizeFunctionType(getContext(), T);
+
+  llvm::Metadata *&InternalId = GeneralizedMetadataIdMap[T.getCanonicalType()];
+  if (InternalId)
+    return InternalId;
+
+  if (isExternallyVisible(T->getLinkage())) {
+    std::string OutName;
+    llvm::raw_string_ostream Out(OutName);
+    getCXXABI().getMangleContext().mangleTypeName(T, Out);
+    Out << ".generalized";
+
+    InternalId = llvm::MDString::get(getLLVMContext(), Out.str());
+  } else {
+    InternalId = llvm::MDNode::getDistinct(getLLVMContext(),
+                                           llvm::ArrayRef<llvm::Metadata *>());
+  }
+
+  return InternalId;
+}
+
 /// Returns whether this module needs the "all-vtables" type identifier.
 bool CodeGenModule::NeedAllVtablesTypeId() const {
   // Returns true if at least one of vtable-based CFI checkers is enabled and
@@ -4615,14 +4695,23 @@ void CodeGenModule::getFunctionFeatureMap(llvm::StringMap<bool> &FeatureMap,
     // If we have a TargetAttr build up the feature map based on that.
     TargetAttr::ParsedTargetAttr ParsedAttr = TD->parse();
 
+    ParsedAttr.Features.erase(
+        llvm::remove_if(ParsedAttr.Features,
+                        [&](const std::string &Feat) {
+                          return !Target.isValidFeatureName(
+                              StringRef{Feat}.substr(1));
+                        }),
+        ParsedAttr.Features.end());
+
     // Make a copy of the features as passed on the command line into the
     // beginning of the additional features from the function to override.
     ParsedAttr.Features.insert(ParsedAttr.Features.begin(),
                             Target.getTargetOpts().FeaturesAsWritten.begin(),
                             Target.getTargetOpts().FeaturesAsWritten.end());
 
-    if (ParsedAttr.Architecture != "")
-      TargetCPU = ParsedAttr.Architecture ;
+    if (ParsedAttr.Architecture != "" &&
+        Target.isValidCPUName(ParsedAttr.Architecture))
+      TargetCPU = ParsedAttr.Architecture;
 
     // Now populate the feature map, first with the TargetCPU which is either
     // the default or a new one from the target attribute string. Then we'll use

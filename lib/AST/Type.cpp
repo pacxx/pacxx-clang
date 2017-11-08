@@ -169,6 +169,26 @@ DependentSizedExtVectorType::Profile(llvm::FoldingSetNodeID &ID,
   SizeExpr->Profile(ID, Context, true);
 }
 
+DependentAddressSpaceType::DependentAddressSpaceType(
+    const ASTContext &Context, QualType PointeeType, QualType can,
+    Expr *AddrSpaceExpr, SourceLocation loc)
+    : Type(DependentAddressSpace, can, /*Dependent=*/true,
+           /*InstantiationDependent=*/true,
+           PointeeType->isVariablyModifiedType(),
+           (PointeeType->containsUnexpandedParameterPack() ||
+            (AddrSpaceExpr &&
+             AddrSpaceExpr->containsUnexpandedParameterPack()))),
+      Context(Context), AddrSpaceExpr(AddrSpaceExpr), PointeeType(PointeeType),
+      loc(loc) {}
+
+void DependentAddressSpaceType::Profile(llvm::FoldingSetNodeID &ID,
+                                        const ASTContext &Context,
+                                        QualType PointeeType,
+                                        Expr *AddrSpaceExpr) {
+  ID.AddPointer(PointeeType.getAsOpaquePtr());
+  AddrSpaceExpr->Profile(ID, Context, true);
+}
+
 VectorType::VectorType(QualType vecType, unsigned nElements, QualType canonType,
                        VectorKind vecKind)
     : VectorType(Vector, vecType, nElements, canonType, vecKind) {}
@@ -2146,6 +2166,151 @@ bool QualType::isTriviallyCopyableType(const ASTContext &Context) const {
   return false;
 }
 
+bool QualType::unionHasUniqueObjectRepresentations(
+    const ASTContext &Context) const {
+  assert((*this)->isUnionType() && "must be union type");
+  CharUnits UnionSize = Context.getTypeSizeInChars(*this);
+  const RecordDecl *Union = getTypePtr()->getAs<RecordType>()->getDecl();
+
+  for (const auto *Field : Union->fields()) {
+    if (!Field->getType().hasUniqueObjectRepresentations(Context))
+      return false;
+    CharUnits FieldSize = Context.getTypeSizeInChars(Field->getType());
+    if (FieldSize != UnionSize)
+      return false;
+  }
+  return true;
+}
+
+static bool isStructEmpty(QualType Ty) {
+  assert(Ty.getTypePtr()->isStructureOrClassType() &&
+         "Must be struct or class");
+  const RecordDecl *RD = Ty.getTypePtr()->getAs<RecordType>()->getDecl();
+
+  if (!RD->field_empty())
+    return false;
+
+  if (const CXXRecordDecl *ClassDecl = dyn_cast<CXXRecordDecl>(RD)) {
+    return ClassDecl->isEmpty();
+  }
+
+  return true;
+}
+
+bool QualType::structHasUniqueObjectRepresentations(
+    const ASTContext &Context) const {
+  assert((*this)->isStructureOrClassType() && "Must be struct or class");
+  const RecordDecl *RD = getTypePtr()->getAs<RecordType>()->getDecl();
+
+  if (isStructEmpty(*this))
+    return false;
+
+  // Check base types.
+  CharUnits BaseSize{};
+  if (const CXXRecordDecl *ClassDecl = dyn_cast<CXXRecordDecl>(RD)) {
+    for (const auto Base : ClassDecl->bases()) {
+      if (Base.isVirtual())
+        return false;
+
+      // Empty bases are permitted, otherwise ensure base has unique
+      // representation. Also, Empty Base Optimization means that an
+      // Empty base takes up 0 size.
+      if (!isStructEmpty(Base.getType())) {
+        if (!Base.getType().structHasUniqueObjectRepresentations(Context))
+          return false;
+        BaseSize += Context.getTypeSizeInChars(Base.getType());
+      }
+    }
+  }
+
+  CharUnits StructSize = Context.getTypeSizeInChars(*this);
+
+  // This struct obviously has bases that keep it from being 'empty', so
+  // checking fields is no longer required.  Ensure that the struct size
+  // is the sum of the bases.
+  if (RD->field_empty())
+    return StructSize == BaseSize;
+  ;
+
+  CharUnits CurOffset =
+      Context.toCharUnitsFromBits(Context.getFieldOffset(*RD->field_begin()));
+
+  // If the first field isn't at the sum of the size of the bases, there
+  // is padding somewhere.
+  if (BaseSize != CurOffset)
+    return false;
+
+  for (const auto *Field : RD->fields()) {
+    if (!Field->getType().hasUniqueObjectRepresentations(Context))
+      return false;
+    CharUnits FieldSize = Context.getTypeSizeInChars(Field->getType());
+    CharUnits FieldOffset =
+        Context.toCharUnitsFromBits(Context.getFieldOffset(Field));
+    // Has padding between fields.
+    if (FieldOffset != CurOffset)
+      return false;
+    CurOffset += FieldSize;
+  }
+  // Check for tail padding.
+  return CurOffset == StructSize;
+}
+
+bool QualType::hasUniqueObjectRepresentations(const ASTContext &Context) const {
+  // C++17 [meta.unary.prop]:
+  //   The predicate condition for a template specialization
+  //   has_unique_object_representations<T> shall be
+  //   satisfied if and only if:
+  //     (9.1) - T is trivially copyable, and
+  //     (9.2) - any two objects of type T with the same value have the same
+  //     object representation, where two objects
+  //   of array or non-union class type are considered to have the same value
+  //   if their respective sequences of
+  //   direct subobjects have the same values, and two objects of union type
+  //   are considered to have the same
+  //   value if they have the same active member and the corresponding members
+  //   have the same value.
+  //   The set of scalar types for which this condition holds is
+  //   implementation-defined. [ Note: If a type has padding
+  //   bits, the condition does not hold; otherwise, the condition holds true
+  //   for unsigned integral types. -- end note ]
+  if (isNull())
+    return false;
+
+  // Arrays are unique only if their element type is unique.
+  if ((*this)->isArrayType())
+    return Context.getBaseElementType(*this).hasUniqueObjectRepresentations(
+        Context);
+
+  // (9.1) - T is trivially copyable, and
+  if (!isTriviallyCopyableType(Context))
+    return false;
+
+  // Functions are not unique.
+  if ((*this)->isFunctionType())
+    return false;
+
+  // All integrals and enums are unique!
+  if ((*this)->isIntegralOrEnumerationType())
+    return true;
+
+  // All pointers are unique, since they're just integrals.
+  if ((*this)->isPointerType() || (*this)->isMemberPointerType())
+    return true;
+
+  if ((*this)->isRecordType()) {
+    const RecordDecl *Record = getTypePtr()->getAs<RecordType>()->getDecl();
+
+    // Lambda types are not unique, so exclude them immediately.
+    if (Record->isLambda())
+      return false;
+
+    if (Record->isUnion())
+      return unionHasUniqueObjectRepresentations(Context);
+    return structHasUniqueObjectRepresentations(Context);
+  }
+  return false;
+}
+
 bool QualType::isNonWeakInMRRWithObjCWeak(const ASTContext &Context) const {
   return !Context.getLangOpts().ObjCAutoRefCount &&
          Context.getLangOpts().ObjCWeak &&
@@ -2994,6 +3159,19 @@ bool TagType::isBeingDefined() const {
   return getDecl()->isBeingDefined();
 }
 
+bool RecordType::hasConstFields() const {
+  for (FieldDecl *FD : getDecl()->fields()) {
+    QualType FieldTy = FD->getType();
+    if (FieldTy.isConstQualified())
+      return true;
+    FieldTy = FieldTy.getCanonicalType();
+    if (const RecordType *FieldRecTy = FieldTy->getAs<RecordType>())
+      if (FieldRecTy->hasConstFields())
+        return true;
+  }
+  return false;
+}
+
 bool AttributedType::isQualifier() const {
   switch (getAttrKind()) {
   // These are type qualifiers in the traditional C sense: they annotate
@@ -3638,6 +3816,7 @@ bool Type::canHaveNullability(bool ResultIfUnknown) const {
   case Type::DependentSizedExtVector:
   case Type::Vector:
   case Type::ExtVector:
+  case Type::DependentAddressSpace:
   case Type::FunctionProto:
   case Type::FunctionNoProto:
   case Type::Record:

@@ -65,6 +65,27 @@ protected:
 TEST_F(FormatTestJS, BlockComments) {
   verifyFormat("/* aaaaaaaaaaaaa */ aaaaaaaaaaaaaaaaaaaaaaaaaaa(\n"
                "    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa);");
+  // Breaks after a single line block comment.
+  EXPECT_EQ("aaaaa = bbbb.ccccccccccccccc(\n"
+            "    /** @type_{!cccc.rrrrrrr.MMMMMMMMMMMM.LLLLLLLLLLL.lala} */\n"
+            "    mediaMessage);",
+            format("aaaaa = bbbb.ccccccccccccccc(\n"
+                   "    /** "
+                   "@type_{!cccc.rrrrrrr.MMMMMMMMMMMM.LLLLLLLLLLL.lala} */ "
+                   "mediaMessage);",
+                   getGoogleJSStyleWithColumns(70)));
+  // Breaks after a multiline block comment.
+  EXPECT_EQ(
+      "aaaaa = bbbb.ccccccccccccccc(\n"
+      "    /**\n"
+      "     * @type_{!cccc.rrrrrrr.MMMMMMMMMMMM.LLLLLLLLLLL.lala}\n"
+      "     */\n"
+      "    mediaMessage);",
+      format("aaaaa = bbbb.ccccccccccccccc(\n"
+             "    /**\n"
+             "     * @type_{!cccc.rrrrrrr.MMMMMMMMMMMM.LLLLLLLLLLL.lala}\n"
+             "     */ mediaMessage);",
+             getGoogleJSStyleWithColumns(70)));
 }
 
 TEST_F(FormatTestJS, JSDocComments) {
@@ -558,8 +579,6 @@ TEST_F(FormatTestJS, GoogModules) {
                getGoogleJSStyleWithColumns(40));
   verifyFormat("var long = goog.require('this.is.really.absurdly.long');",
                getGoogleJSStyleWithColumns(40));
-  verifyFormat("goog.setTestOnly('this.is.really.absurdly.long');",
-               getGoogleJSStyleWithColumns(40));
   verifyFormat("goog.forwardDeclare('this.is.really.absurdly.long');",
                getGoogleJSStyleWithColumns(40));
 
@@ -567,6 +586,12 @@ TEST_F(FormatTestJS, GoogModules) {
   verifyFormat(
       "var MyLongClassName =\n"
       "    goog.module.get('my.long.module.name.followedBy.MyLongClassName');");
+  verifyFormat("function a() {\n"
+               "  goog.setTestOnly();\n"
+               "}\n",
+               "function a() {\n"
+               "goog.setTestOnly();\n"
+               "}\n");
 }
 
 TEST_F(FormatTestJS, FormatsNamespaces) {

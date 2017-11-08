@@ -266,11 +266,12 @@ bool Parser::diagnoseUnknownTemplateId(ExprResult LHS, SourceLocation Less) {
   return false;
 }
 
-static bool isFoldOperator(prec::Level Level) {
+bool Parser::isFoldOperator(prec::Level Level) const {
   return Level > prec::Unknown && Level != prec::Conditional;
 }
-static bool isFoldOperator(tok::TokenKind Kind) {
-  return isFoldOperator(getBinOpPrecedence(Kind, false, true));
+
+bool Parser::isFoldOperator(tok::TokenKind Kind) const {
+  return isFoldOperator(getBinOpPrecedence(Kind, GreaterThanIsOperator, true));
 }
 
 /// \brief Parse a binary expression that starts with \p LHS and has a
@@ -716,6 +717,7 @@ class CastExpressionIdValidator : public CorrectionCandidateCallback {
 ///                   '__is_sealed'                           [MS]
 ///                   '__is_trivial'
 ///                   '__is_union'
+///                   '__has_unique_object_representations'
 ///
 /// [Clang] unary-type-trait:
 ///                   '__is_aggregate'
@@ -798,7 +800,8 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
 
   case tok::kw_true:
   case tok::kw_false:
-    return ParseCXXBoolLiteral();
+    Res = ParseCXXBoolLiteral();
+    break;
   
   case tok::kw___objc_yes:
   case tok::kw___objc_no:

@@ -537,7 +537,6 @@ private:
 
   bool dataTraverseNode(Stmt *S, DataRecursionQueue *Queue);
   bool PostVisitStmt(Stmt *S);
-  bool shouldTraverseTemplateArgumentsBeforeDecl() const { return false; }
 };
 
 template <typename Derived>
@@ -989,6 +988,11 @@ DEF_TRAVERSE_TYPE(DependentSizedArrayType, {
     TRY_TO(TraverseStmt(T->getSizeExpr()));
 })
 
+DEF_TRAVERSE_TYPE(DependentAddressSpaceType, {
+  TRY_TO(TraverseStmt(T->getAddrSpaceExpr()));
+  TRY_TO(TraverseType(T->getPointeeType()));
+})
+
 DEF_TRAVERSE_TYPE(DependentSizedExtVectorType, {
   if (T->getSizeExpr())
     TRY_TO(TraverseStmt(T->getSizeExpr()));
@@ -1197,6 +1201,11 @@ DEF_TRAVERSE_TYPELOC(VariableArrayType, {
 DEF_TRAVERSE_TYPELOC(DependentSizedArrayType, {
   TRY_TO(TraverseTypeLoc(TL.getElementLoc()));
   return TraverseArrayTypeLocHelper(TL);
+})
+
+DEF_TRAVERSE_TYPELOC(DependentAddressSpaceType, {
+  TRY_TO(TraverseStmt(TL.getTypePtr()->getAddrSpaceExpr()));
+  TRY_TO(TraverseType(TL.getTypePtr()->getPointeeType()));
 })
 
 // FIXME: order? why not size expr first?
@@ -1691,13 +1700,8 @@ bool RecursiveASTVisitor<Derived>::TraverseTemplateInstantiations(
 // template declarations.
 #define DEF_TRAVERSE_TMPL_DECL(TMPLDECLKIND)                                   \
   DEF_TRAVERSE_DECL(TMPLDECLKIND##TemplateDecl, {                              \
-    if (getDerived().shouldTraverseTemplateArgumentsBeforeDecl()) {            \
-      TRY_TO(TraverseTemplateParameterListHelper(D->getTemplateParameters())); \
-      TRY_TO(TraverseDecl(D->getTemplatedDecl()));                             \
-    } else {                                                                   \
-      TRY_TO(TraverseDecl(D->getTemplatedDecl()));                             \
-      TRY_TO(TraverseTemplateParameterListHelper(D->getTemplateParameters())); \
-    }                                                                          \
+    TRY_TO(TraverseTemplateParameterListHelper(D->getTemplateParameters()));   \
+    TRY_TO(TraverseDecl(D->getTemplatedDecl()));                               \
                                                                                \
     /* By default, we do not traverse the instantiations of                    \
        class templates since they do not appear in the user code. The          \
@@ -3105,6 +3109,7 @@ bool RecursiveASTVisitor<Derived>::VisitOMPDependClause(OMPDependClause *C) {
 
 template <typename Derived>
 bool RecursiveASTVisitor<Derived>::VisitOMPDeviceClause(OMPDeviceClause *C) {
+  TRY_TO(VisitOMPClauseWithPreInit(C));
   TRY_TO(TraverseStmt(C->getDevice()));
   return true;
 }

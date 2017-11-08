@@ -22,6 +22,12 @@
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Tooling/CommonOptionsParser.h"
 #include "clang/Tooling/Refactoring.h"
+#include "clang/Tooling/Refactoring/RefactoringAction.h"
+#include "clang/Tooling/Refactoring/RefactoringDiagnostic.h"
+#include "clang/Tooling/Refactoring/RefactoringOptions.h"
+#include "clang/Tooling/Refactoring/Rename/SymbolName.h"
+#include "clang/Tooling/Refactoring/Rename/USRFinder.h"
+#include "clang/Tooling/Refactoring/Rename/USRFindingAction.h"
 #include "clang/Tooling/Refactoring/Rename/USRLocFinder.h"
 #include "clang/Tooling/Tooling.h"
 #include "llvm/ADT/STLExtras.h"
@@ -33,21 +39,74 @@ using namespace llvm;
 namespace clang {
 namespace tooling {
 
+namespace {
+
+class OccurrenceFinder final : public FindSymbolOccurrencesRefactoringRule {
+public:
+  OccurrenceFinder(const NamedDecl *ND) : ND(ND) {}
+
+  Expected<SymbolOccurrences>
+  findSymbolOccurrences(RefactoringRuleContext &Context) override {
+    std::vector<std::string> USRs =
+        getUSRsForDeclaration(ND, Context.getASTContext());
+    std::string PrevName = ND->getNameAsString();
+    return getOccurrencesOfUSRs(
+        USRs, PrevName, Context.getASTContext().getTranslationUnitDecl());
+  }
+
+private:
+  const NamedDecl *ND;
+};
+
+} // end anonymous namespace
+
+const RefactoringDescriptor &RenameOccurrences::describe() {
+  static const RefactoringDescriptor Descriptor = {
+      "local-rename",
+      "Rename",
+      "Finds and renames symbols in code with no indexer support",
+  };
+  return Descriptor;
+}
+
+Expected<RenameOccurrences>
+RenameOccurrences::initiate(RefactoringRuleContext &Context,
+                            SourceRange SelectionRange, std::string NewName) {
+  const NamedDecl *ND =
+      getNamedDeclAt(Context.getASTContext(), SelectionRange.getBegin());
+  if (!ND)
+    return Context.createDiagnosticError(
+        SelectionRange.getBegin(), diag::err_refactor_selection_no_symbol);
+  return RenameOccurrences(getCanonicalSymbolDeclaration(ND),
+                           std::move(NewName));
+}
+
+Expected<AtomicChanges>
+RenameOccurrences::createSourceReplacements(RefactoringRuleContext &Context) {
+  Expected<SymbolOccurrences> Occurrences =
+      OccurrenceFinder(ND).findSymbolOccurrences(Context);
+  if (!Occurrences)
+    return Occurrences.takeError();
+  // FIXME: Verify that the new name is valid.
+  SymbolName Name(NewName);
+  return createRenameReplacements(
+      *Occurrences, Context.getASTContext().getSourceManager(), Name);
+}
+
 Expected<std::vector<AtomicChange>>
 createRenameReplacements(const SymbolOccurrences &Occurrences,
-                         const SourceManager &SM,
-                         ArrayRef<StringRef> NewNameStrings) {
+                         const SourceManager &SM, const SymbolName &NewName) {
   // FIXME: A true local rename can use just one AtomicChange.
   std::vector<AtomicChange> Changes;
   for (const auto &Occurrence : Occurrences) {
     ArrayRef<SourceRange> Ranges = Occurrence.getNameRanges();
-    assert(NewNameStrings.size() == Ranges.size() &&
+    assert(NewName.getNamePieces().size() == Ranges.size() &&
            "Mismatching number of ranges and name pieces");
     AtomicChange Change(SM, Ranges[0].getBegin());
     for (const auto &Range : llvm::enumerate(Ranges)) {
       auto Error =
           Change.replace(SM, CharSourceRange::getCharRange(Range.value()),
-                         NewNameStrings[Range.index()]);
+                         NewName.getNamePieces()[Range.index()]);
       if (Error)
         return std::move(Error);
     }
@@ -84,8 +143,13 @@ public:
         FileToReplaces(FileToReplaces), PrintLocations(PrintLocations) {}
 
   void HandleTranslationUnit(ASTContext &Context) override {
-    for (unsigned I = 0; I < NewNames.size(); ++I)
+    for (unsigned I = 0; I < NewNames.size(); ++I) {
+      // If the previous name was not found, ignore this rename request.
+      if (PrevNames[I].empty())
+        continue;
+
       HandleOneRename(Context, NewNames[I], PrevNames[I], USRList[I]);
+    }
   }
 
   void HandleOneRename(ASTContext &Context, const std::string &NewName,
@@ -106,7 +170,7 @@ public:
     }
     // FIXME: Support multi-piece names.
     // FIXME: better error handling (propagate error out).
-    StringRef NewNameRef = NewName;
+    SymbolName NewNameRef(NewName);
     Expected<std::vector<AtomicChange>> Change =
         createRenameReplacements(Occurrences, SourceMgr, NewNameRef);
     if (!Change) {

@@ -10,9 +10,14 @@
 #ifndef LLVM_CLANG_TOOLING_REFACTOR_REFACTORING_RULE_CONTEXT_H
 #define LLVM_CLANG_TOOLING_REFACTOR_REFACTORING_RULE_CONTEXT_H
 
+#include "clang/Basic/DiagnosticError.h"
 #include "clang/Basic/SourceManager.h"
+#include "clang/Tooling/Refactoring/ASTSelection.h"
 
 namespace clang {
+
+class ASTContext;
+
 namespace tooling {
 
 /// The refactoring rule context stores all of the inputs that might be needed
@@ -38,6 +43,30 @@ public:
 
   void setSelectionRange(SourceRange R) { SelectionRange = R; }
 
+  bool hasASTContext() const { return AST; }
+
+  ASTContext &getASTContext() const {
+    assert(AST && "no AST!");
+    return *AST;
+  }
+
+  void setASTContext(ASTContext &Context) { AST = &Context; }
+
+  /// Creates an llvm::Error value that contains a diagnostic.
+  ///
+  /// The errors should not outlive the context.
+  llvm::Error createDiagnosticError(SourceLocation Loc, unsigned DiagID) {
+    return DiagnosticError::create(Loc, PartialDiagnostic(DiagID, DiagStorage));
+  }
+
+  llvm::Error createDiagnosticError(unsigned DiagID) {
+    return createDiagnosticError(SourceLocation(), DiagID);
+  }
+
+  void setASTSelection(std::unique_ptr<SelectedASTNode> Node) {
+    ASTNodeSelection = std::move(Node);
+  }
+
 private:
   /// The source manager for the translation unit / file on which a refactoring
   /// action might operate on.
@@ -45,6 +74,14 @@ private:
   /// An optional source selection range that's commonly used to represent
   /// a selection in an editor.
   SourceRange SelectionRange;
+  /// An optional AST for the translation unit on which a refactoring action
+  /// might operate on.
+  ASTContext *AST = nullptr;
+  /// The allocator for diagnostics.
+  PartialDiagnostic::StorageAllocator DiagStorage;
+
+  // FIXME: Remove when memoized.
+  std::unique_ptr<SelectedASTNode> ASTNodeSelection;
 };
 
 } // end namespace tooling

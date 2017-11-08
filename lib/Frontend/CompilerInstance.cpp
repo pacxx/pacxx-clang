@@ -300,12 +300,16 @@ CompilerInstance::createDiagnostics(DiagnosticOptions *Opts,
 
 // File Manager
 
-void CompilerInstance::createFileManager() {
+FileManager *CompilerInstance::createFileManager() {
   if (!hasVirtualFileSystem()) {
-    // TODO: choose the virtual file system based on the CompilerInvocation.
-    setVirtualFileSystem(vfs::getRealFileSystem());
+    if (IntrusiveRefCntPtr<vfs::FileSystem> VFS =
+            createVFSFromCompilerInvocation(getInvocation(), getDiagnostics()))
+      setVirtualFileSystem(VFS);
+    else
+      return nullptr;
   }
   FileMgr = new FileManager(getFileSystemOpts(), VirtualFileSystem);
+  return FileMgr.get();
 }
 
 // Source Manager
@@ -382,6 +386,7 @@ void CompilerInstance::createPreprocessor(TranslationUnitKind TUKind) {
       Invocation->getPreprocessorOptsPtr(), getDiagnostics(), getLangOpts(),
       getSourceManager(), getPCMCache(), *HeaderInfo, *this, PTHMgr,
       /*OwnsHeaderSearch=*/true, TUKind);
+  getTarget().adjust(getLangOpts());
   PP->Initialize(getTarget(), getAuxTarget());
 
   // Note that this is different then passing PTHMgr to Preprocessor's ctor.

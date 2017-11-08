@@ -56,6 +56,8 @@ struct UnwrappedLine {
   size_t MatchingOpeningBlockLineIndex;
 
   static const size_t kInvalidIndex = -1;
+
+  unsigned FirstStartColumn = 0;
 };
 
 class UnwrappedLineConsumer {
@@ -71,6 +73,7 @@ class UnwrappedLineParser {
 public:
   UnwrappedLineParser(const FormatStyle &Style,
                       const AdditionalKeywords &Keywords,
+                      unsigned FirstStartColumn,
                       ArrayRef<FormatToken *> Tokens,
                       UnwrappedLineConsumer &Callback);
 
@@ -96,7 +99,7 @@ private:
   bool parseBracedList(bool ContinueOnSemicolons = false,
                        tok::TokenKind ClosingBraceKind = tok::r_brace);
   void parseParens();
-  void parseSquare();
+  void parseSquare(bool LambdaIntroducer = false);
   void parseIfThenElse();
   void parseTryCatch();
   void parseForOrWhileLoop();
@@ -129,7 +132,6 @@ private:
   // - if the token is '}' and closes a block, LevelDifference is -1.
   void nextToken(int LevelDifference = 0);
   void readToken(int LevelDifference = 0);
-  const FormatToken *getPreviousToken();
 
   // Decides which comment tokens should be added to the current line and which
   // should be added as comments before the next token.
@@ -250,6 +252,10 @@ private:
   FormatToken *IfNdefCondition;
   bool FoundIncludeGuardStart;
   bool IncludeGuardRejected;
+  // Contains the first start column where the source begins. This is zero for
+  // normal source code and may be nonzero when formatting a code fragment that
+  // does not start at the beginning of the file.
+  unsigned FirstStartColumn;
 
   friend class ScopedLineState;
   friend class CompoundStatementIndenter;
@@ -263,8 +269,9 @@ struct UnwrappedLineNode {
   SmallVector<UnwrappedLine, 0> Children;
 };
 
-inline UnwrappedLine::UnwrappedLine() : Level(0), InPPDirective(false),
-  MustBeDeclaration(false), MatchingOpeningBlockLineIndex(kInvalidIndex) {}
+inline UnwrappedLine::UnwrappedLine()
+    : Level(0), InPPDirective(false), MustBeDeclaration(false),
+      MatchingOpeningBlockLineIndex(kInvalidIndex) {}
 
 } // end namespace format
 } // end namespace clang

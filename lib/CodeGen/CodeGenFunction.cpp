@@ -87,7 +87,7 @@ CodeGenFunction::CodeGenFunction(CodeGenModule &cgm, bool suppressNewContext)
 
   llvm::FastMathFlags FMF;
   if (CGM.getLangOpts().FastMath)
-    FMF.setUnsafeAlgebra();
+    FMF.setFast();
   if (CGM.getLangOpts().FiniteMathOnly) {
     FMF.setNoNaNs();
     FMF.setNoInfs();
@@ -118,27 +118,32 @@ CodeGenFunction::~CodeGenFunction() {
 }
 
 CharUnits CodeGenFunction::getNaturalPointeeTypeAlignment(QualType T,
-                                                    LValueBaseInfo *BaseInfo) {
-  return getNaturalTypeAlignment(T->getPointeeType(), BaseInfo,
-                                 /*forPointee*/ true);
+                                                    LValueBaseInfo *BaseInfo,
+                                                    TBAAAccessInfo *TBAAInfo) {
+  return getNaturalTypeAlignment(T->getPointeeType(), BaseInfo, TBAAInfo,
+                                 /* forPointeeType= */ true);
 }
 
 CharUnits CodeGenFunction::getNaturalTypeAlignment(QualType T,
                                                    LValueBaseInfo *BaseInfo,
+                                                   TBAAAccessInfo *TBAAInfo,
                                                    bool forPointeeType) {
+  if (TBAAInfo)
+    *TBAAInfo = CGM.getTBAAAccessInfo(T);
+
   // Honor alignment typedef attributes even on incomplete types.
   // We also honor them straight for C++ class types, even as pointees;
   // there's an expressivity gap here.
   if (auto TT = T->getAs<TypedefType>()) {
     if (auto Align = TT->getDecl()->getMaxAlignment()) {
       if (BaseInfo)
-        *BaseInfo = LValueBaseInfo(AlignmentSource::AttributedType, false);
+        *BaseInfo = LValueBaseInfo(AlignmentSource::AttributedType);
       return getContext().toCharUnitsFromBits(Align);
     }
   }
 
   if (BaseInfo)
-    *BaseInfo = LValueBaseInfo(AlignmentSource::Type, false);
+    *BaseInfo = LValueBaseInfo(AlignmentSource::Type);
 
   CharUnits Alignment;
   if (T->isIncompleteType()) {
@@ -169,9 +174,10 @@ CharUnits CodeGenFunction::getNaturalTypeAlignment(QualType T,
 
 LValue CodeGenFunction::MakeNaturalAlignAddrLValue(llvm::Value *V, QualType T) {
   LValueBaseInfo BaseInfo;
-  CharUnits Alignment = getNaturalTypeAlignment(T, &BaseInfo);
+  TBAAAccessInfo TBAAInfo;
+  CharUnits Alignment = getNaturalTypeAlignment(T, &BaseInfo, &TBAAInfo);
   return LValue::MakeAddr(Address(V, Alignment), T, getContext(), BaseInfo,
-                          CGM.getTBAAInfo(T));
+                          TBAAInfo);
 }
 
 /// Given a value of type T* that may not be to a complete object,
@@ -179,8 +185,10 @@ LValue CodeGenFunction::MakeNaturalAlignAddrLValue(llvm::Value *V, QualType T) {
 LValue
 CodeGenFunction::MakeNaturalAlignPointeeAddrLValue(llvm::Value *V, QualType T) {
   LValueBaseInfo BaseInfo;
-  CharUnits Align = getNaturalTypeAlignment(T, &BaseInfo, /*pointee*/ true);
-  return MakeAddrLValue(Address(V, Align), T, BaseInfo);
+  TBAAAccessInfo TBAAInfo;
+  CharUnits Align = getNaturalTypeAlignment(T, &BaseInfo, &TBAAInfo,
+                                            /* forPointeeType= */ true);
+  return MakeAddrLValue(Address(V, Align), T, BaseInfo, TBAAInfo);
 }
 
 
@@ -429,6 +437,43 @@ bool CodeGenFunction::ShouldXRayInstrumentFunction() const {
   return CGM.getCodeGenOpts().XRayInstrumentFunctions;
 }
 
+llvm::Constant *
+CodeGenFunction::EncodeAddrForUseInPrologue(llvm::Function *F,
+                                            llvm::Constant *Addr) {
+  // Addresses stored in prologue data can't require run-time fixups and must
+  // be PC-relative. Run-time fixups are undesirable because they necessitate
+  // writable text segments, which are unsafe. And absolute addresses are
+  // undesirable because they break PIE mode.
+
+  // Add a layer of indirection through a private global. Taking its address
+  // won't result in a run-time fixup, even if Addr has linkonce_odr linkage.
+  auto *GV = new llvm::GlobalVariable(CGM.getModule(), Addr->getType(),
+                                      /*isConstant=*/true,
+                                      llvm::GlobalValue::PrivateLinkage, Addr);
+
+  // Create a PC-relative address.
+  auto *GOTAsInt = llvm::ConstantExpr::getPtrToInt(GV, IntPtrTy);
+  auto *FuncAsInt = llvm::ConstantExpr::getPtrToInt(F, IntPtrTy);
+  auto *PCRelAsInt = llvm::ConstantExpr::getSub(GOTAsInt, FuncAsInt);
+  return (IntPtrTy == Int32Ty)
+             ? PCRelAsInt
+             : llvm::ConstantExpr::getTrunc(PCRelAsInt, Int32Ty);
+}
+
+llvm::Value *
+CodeGenFunction::DecodeAddrUsedInPrologue(llvm::Value *F,
+                                          llvm::Value *EncodedAddr) {
+  // Reconstruct the address of the global.
+  auto *PCRelAsInt = Builder.CreateSExt(EncodedAddr, IntPtrTy);
+  auto *FuncAsInt = Builder.CreatePtrToInt(F, IntPtrTy, "func_addr.int");
+  auto *GOTAsInt = Builder.CreateAdd(PCRelAsInt, FuncAsInt, "global_addr.int");
+  auto *GOTAddr = Builder.CreateIntToPtr(GOTAsInt, Int8PtrPtrTy, "global_addr");
+
+  // Load the original pointer through the global.
+  return Builder.CreateLoad(Address(GOTAddr, getPointerAlign()),
+                            "decoded_addr");
+}
+
 /// EmitFunctionInstrumentation - Emit LLVM code to call the specified
 /// instrumentation function with the current function and the call site, if
 /// function instrumentation is enabled.
@@ -480,8 +525,8 @@ static void removeImageAccessQualifier(std::string& TyName) {
 // for example in clGetKernelArgInfo() implementation between the address
 // spaces with targets without unique mapping to the OpenCL address spaces
 // (basically all single AS CPUs).
-static unsigned ArgInfoAddressSpace(unsigned LangAS) {
-  switch (LangAS) {
+static unsigned ArgInfoAddressSpace(LangAS AS) {
+  switch (AS) {
   case LangAS::opencl_global:   return 1;
   case LangAS::opencl_constant: return 2;
   case LangAS::opencl_local:    return 3;
@@ -797,6 +842,15 @@ static bool matchesStlAllocatorFn(const Decl *D, const ASTContext &Ctx) {
   return true;
 }
 
+/// Return the UBSan prologue signature for \p FD if one is available.
+static llvm::Constant *getPrologueSignature(CodeGenModule &CGM,
+                                            const FunctionDecl *FD) {
+  if (const auto *MD = dyn_cast<CXXMethodDecl>(FD))
+    if (!MD->isStatic())
+      return nullptr;
+  return CGM.getTargetCodeGenInfo().getUBSanFunctionSignature(CGM);
+}
+
 void CodeGenFunction::StartFunction(GlobalDecl GD,
                                     QualType RetTy,
                                     llvm::Function *Fn,
@@ -820,8 +874,19 @@ void CodeGenFunction::StartFunction(GlobalDecl GD,
   CurFnInfo = &FnInfo;
   assert(CurFn->isDeclaration() && "Function already has body?");
 
-  if (CGM.isInSanitizerBlacklist(Fn, Loc))
-    SanOpts.clear();
+  // If this function has been blacklisted for any of the enabled sanitizers,
+  // disable the sanitizer for the function.
+  do {
+#define SANITIZER(NAME, ID)                                                    \
+  if (SanOpts.empty())                                                         \
+    break;                                                                     \
+  if (SanOpts.has(SanitizerKind::ID))                                          \
+    if (CGM.isInSanitizerBlacklist(SanitizerKind::ID, Fn, Loc))                \
+      SanOpts.set(SanitizerKind::ID, false);
+
+#include "clang/Basic/Sanitizers.def"
+#undef SANITIZER
+  } while (0);
 
   if (D) {
     // Apply the no_sanitize* attributes to SanOpts.
@@ -912,11 +977,13 @@ void CodeGenFunction::StartFunction(GlobalDecl GD,
   // prologue data.
   if (getLangOpts().CPlusPlus && SanOpts.has(SanitizerKind::Function)) {
     if (const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(D)) {
-      if (llvm::Constant *PrologueSig =
-              CGM.getTargetCodeGenInfo().getUBSanFunctionSignature(CGM)) {
+      if (llvm::Constant *PrologueSig = getPrologueSignature(CGM, FD)) {
         llvm::Constant *FTRTTIConst =
             CGM.GetAddrOfRTTIDescriptor(FD->getType(), /*ForEH=*/true);
-        llvm::Constant *PrologueStructElems[] = { PrologueSig, FTRTTIConst };
+        llvm::Constant *FTRTTIConstEncoded =
+            EncodeAddrForUseInPrologue(Fn, FTRTTIConst);
+        llvm::Constant *PrologueStructElems[] = {PrologueSig,
+                                                 FTRTTIConstEncoded};
         llvm::Constant *PrologueStructConst =
             llvm::ConstantStruct::getAnon(PrologueStructElems, /*Packed=*/true);
         Fn->setPrologueData(PrologueStructConst);

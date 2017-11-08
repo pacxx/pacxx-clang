@@ -1169,7 +1169,6 @@ ItaniumRecordLayoutBuilder::LayoutBase(const BaseSubobjectInfo *Base) {
   // Query the external layout to see if it provides an offset.
   bool HasExternalLayout = false;
   if (UseExternalLayout) {
-    llvm::DenseMap<const CXXRecordDecl *, CharUnits>::iterator Known;
     if (Base->IsVirtual)
       HasExternalLayout = External.getExternalNVBaseOffset(Base->Class, Offset);
     else
@@ -1732,7 +1731,7 @@ void ItaniumRecordLayoutBuilder::LayoutField(const FieldDecl *D,
     const ArrayType* ATy = Context.getAsArrayType(D->getType());
     FieldAlign = Context.getTypeAlignInChars(ATy->getElementType());
   } else if (const ReferenceType *RT = D->getType()->getAs<ReferenceType>()) {
-    unsigned AS = RT->getPointeeType().getAddressSpace();
+    unsigned AS = Context.getTargetAddressSpace(RT->getPointeeType());
     FieldSize = 
       Context.toCharUnitsFromBits(Context.getTargetInfo().getPointerWidth(AS));
     FieldAlign = 
@@ -2084,7 +2083,7 @@ static bool mustSkipTailPadding(TargetCXXABI ABI, const CXXRecordDecl *RD) {
     // rules, we should implement the restrictions about over-sized
     // bitfields:
     //
-    // http://mentorembedded.github.com/cxx-abi/abi.html#POD :
+    // http://itanium-cxx-abi.github.io/cxx-abi/abi.html#POD :
     //   In general, a type is considered a POD for the purposes of
     //   layout if it is a POD type (in the sense of ISO C++
     //   [basic.types]). However, a POD-struct or POD-union (in the

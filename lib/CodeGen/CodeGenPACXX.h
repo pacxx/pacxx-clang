@@ -21,7 +21,7 @@ class KernelVisitor : public RecursiveASTVisitor<KernelVisitor> {
       if (CastTy->isPointerType())
         CastTy = CastTy->getPointeeType();
 
-      if (CastTy.getAddressSpace() != 0) {
+      if (CastTy.getAddressSpace() != LangAS::Default) {
         E->setCastKind(CastKind::CK_AddressSpaceConversion);
         return false;
       }

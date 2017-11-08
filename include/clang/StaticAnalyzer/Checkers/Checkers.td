@@ -132,6 +132,10 @@ def DynamicTypePropagation : Checker<"DynamicTypePropagation">,
   HelpText<"Generate dynamic type information">,
   DescFile<"DynamicTypePropagation.cpp">;
 
+def NonnullGlobalConstantsChecker: Checker<"NonnilStringConstants">,
+  HelpText<"Assume that const string-like globals are non-null">,
+  DescFile<"NonilStringConstantsChecker.cpp">;
+
 } // end "core"
 
 let ParentPackage = CoreAlpha in {
@@ -283,6 +287,11 @@ def VirtualCallChecker : Checker<"VirtualCall">,
 } // end: "optin.cplusplus"
 
 let ParentPackage = CplusplusAlpha in {
+
+def DeleteWithNonVirtualDtorChecker : Checker<"DeleteWithNonVirtualDtor">,
+  HelpText<"Reports destructions of polymorphic objects with a non-virtual "
+           "destructor in their base class">,
+  DescFile<"DeleteWithNonVirtualDtorChecker.cpp">;
 
 def IteratorRangeChecker : Checker<"IteratorRange">,
   HelpText<"Check for iterators used outside their valid ranges">,
@@ -738,10 +747,6 @@ def ExprInspectionChecker : Checker<"ExprInspection">,
 
 def ExplodedGraphViewer : Checker<"ViewExplodedGraph">,
   HelpText<"View Exploded Graphs using GraphViz">,
-  DescFile<"DebugCheckers.cpp">;
-
-def BugHashDumper : Checker<"DumpBugHash">,
-  HelpText<"Dump the bug hash for all statements.">,
   DescFile<"DebugCheckers.cpp">;
 
 } // end "debug"

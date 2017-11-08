@@ -433,6 +433,15 @@ ASTTypeWriter::VisitDependentSizedExtVectorType(
   Code = TYPE_DEPENDENT_SIZED_EXT_VECTOR;
 }
 
+void 
+ASTTypeWriter::VisitDependentAddressSpaceType(
+    const DependentAddressSpaceType *T) {
+  Record.AddTypeRef(T->getPointeeType());
+  Record.AddStmt(T->getAddrSpaceExpr());
+  Record.AddSourceLocation(T->getAttributeLoc());
+  Code = TYPE_DEPENDENT_ADDRESS_SPACE;
+}
+
 void
 ASTTypeWriter::VisitTemplateTypeParmType(const TemplateTypeParmType *T) {
   Record.push_back(T->getDepth());
@@ -625,6 +634,15 @@ void TypeLocWriter::VisitVariableArrayTypeLoc(VariableArrayTypeLoc TL) {
 void TypeLocWriter::VisitDependentSizedArrayTypeLoc(
                                             DependentSizedArrayTypeLoc TL) {
   VisitArrayTypeLoc(TL);
+}
+
+void TypeLocWriter::VisitDependentAddressSpaceTypeLoc(
+    DependentAddressSpaceTypeLoc TL) {
+  Record.AddSourceLocation(TL.getAttrNameLoc());
+  SourceRange range = TL.getAttrOperandParensRange();
+  Record.AddSourceLocation(range.getBegin());
+  Record.AddSourceLocation(range.getEnd());
+  Record.AddStmt(TL.getAttrExprOperand());       
 }
 
 void TypeLocWriter::VisitDependentSizedExtVectorTypeLoc(
@@ -1130,6 +1148,7 @@ void ASTWriter::WriteBlockInfoBlock() {
   RECORD(SUBMODULE_TEXTUAL_HEADER);
   RECORD(SUBMODULE_PRIVATE_TEXTUAL_HEADER);
   RECORD(SUBMODULE_INITIALIZERS);
+  RECORD(SUBMODULE_EXPORT_AS);
 
   // Comments Block.
   BLOCK(COMMENTS_BLOCK);
@@ -2388,6 +2407,17 @@ void ASTWriter::WritePreprocessor(const Preprocessor &PP, bool IsModule) {
 
   if (PP.isRecordingPreamble() && PP.hasRecordedPreamble()) {
     assert(!IsModule);
+    auto SkipInfo = PP.getPreambleSkipInfo();
+    if (SkipInfo.hasValue()) {
+      Record.push_back(true);
+      AddSourceLocation(SkipInfo->HashTokenLoc, Record);
+      AddSourceLocation(SkipInfo->IfTokenLoc, Record);
+      Record.push_back(SkipInfo->FoundNonSkipPortion);
+      Record.push_back(SkipInfo->FoundElse);
+      AddSourceLocation(SkipInfo->ElseLoc, Record);
+    } else {
+      Record.push_back(false);
+    }
     for (const auto &Cond : PP.getPreambleConditionalStack()) {
       AddSourceLocation(Cond.IfLoc, Record);
       Record.push_back(Cond.WasSkipping);
@@ -2791,6 +2821,11 @@ void ASTWriter::WriteSubmodules(Module *WritingModule) {
   Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Blob));    // Message
   unsigned ConflictAbbrev = Stream.EmitAbbrev(std::move(Abbrev));
 
+  Abbrev = std::make_shared<BitCodeAbbrev>();
+  Abbrev->Add(BitCodeAbbrevOp(SUBMODULE_EXPORT_AS));
+  Abbrev->Add(BitCodeAbbrevOp(BitCodeAbbrevOp::Blob));    // Macro name
+  unsigned ExportAsAbbrev = Stream.EmitAbbrev(std::move(Abbrev));
+
   // Write the submodule metadata block.
   RecordData::value_type Record[] = {
       getNumberOfModules(WritingModule),
@@ -2925,6 +2960,12 @@ void ASTWriter::WriteSubmodules(Module *WritingModule) {
     if (!Inits.empty())
       Stream.EmitRecord(SUBMODULE_INITIALIZERS, Inits);
 
+    // Emit the name of the re-exported module, if any.
+    if (!Mod->ExportAsModule.empty()) {
+      RecordData::value_type Record[] = {SUBMODULE_EXPORT_AS};
+      Stream.EmitRecordWithBlob(ExportAsAbbrev, Record, Mod->ExportAsModule);
+    }
+    
     // Queue up the submodules of this module.
     for (auto *M : Mod->submodules())
       Q.push(M);
@@ -5054,6 +5095,8 @@ void ASTWriter::WriteDeclUpdatesBlocks(RecordDataImpl &OffsetsRecord) {
       case UPD_CXX_INSTANTIATED_STATIC_DATA_MEMBER: {
         const VarDecl *VD = cast<VarDecl>(D);
         Record.AddSourceLocation(Update.getLoc());
+        Record.push_back(VD->isInline());
+        Record.push_back(VD->isInlineSpecified());
         if (VD->getInit()) {
           Record.push_back(!VD->isInitKnownICE() ? 1
                                                  : (VD->isInitICE() ? 3 : 2));
@@ -5121,6 +5164,7 @@ void ASTWriter::WriteDeclUpdatesBlocks(RecordDataImpl &OffsetsRecord) {
 
       case UPD_CXX_RESOLVED_DTOR_DELETE:
         Record.AddDeclRef(Update.getDecl());
+        Record.AddStmt(cast<CXXDestructorDecl>(D)->getOperatorDeleteThisArg());
         break;
 
       case UPD_CXX_RESOLVED_EXCEPTION_SPEC:
@@ -6148,7 +6192,8 @@ void ASTWriter::DeducedReturnType(const FunctionDecl *FD, QualType ReturnType) {
 }
 
 void ASTWriter::ResolvedOperatorDelete(const CXXDestructorDecl *DD,
-                                       const FunctionDecl *Delete) {
+                                       const FunctionDecl *Delete,
+                                       Expr *ThisArg) {
   if (Chain && Chain->isProcessingUpdateRecords()) return;
   assert(!WritingAST && "Already writing the AST!");
   assert(Delete && "Not given an operator delete");

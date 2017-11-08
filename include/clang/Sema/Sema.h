@@ -64,7 +64,7 @@ namespace llvm {
   template <typename ValueT> struct DenseMapInfo;
   template <typename ValueT, typename ValueInfoT> class DenseSet;
   class SmallBitVector;
-  class InlineAsmIdentifierInfo;
+  struct InlineAsmIdentifierInfo;
 }
 
 namespace clang {
@@ -229,6 +229,10 @@ struct FileNullability {
   /// not have a corresponding nullability annotation.
   SourceLocation PointerLoc;
 
+  /// The end location for the first pointer declarator in the file. Used for
+  /// placing fix-its.
+  SourceLocation PointerEndLoc;
+
   /// Which kind of pointer declarator we saw.
   uint8_t PointerKind;
 
@@ -281,15 +285,21 @@ class Sema {
 
   bool isVisibleSlow(const NamedDecl *D);
 
+  /// Determine whether two declarations should be linked together, given that
+  /// the old declaration might not be visible and the new declaration might
+  /// not have external linkage.
   bool shouldLinkPossiblyHiddenDecl(const NamedDecl *Old,
                                     const NamedDecl *New) {
-    // We are about to link these. It is now safe to compute the linkage of
-    // the new decl. If the new decl has external linkage, we will
-    // link it with the hidden decl (which also has external linkage) and
-    // it will keep having external linkage. If it has internal linkage, we
-    // will not link it. Since it has no previous decls, it will remain
-    // with internal linkage.
-    return isVisible(Old) || New->isExternallyVisible();
+    if (isVisible(Old))
+     return true;
+    // See comment in below overload for why it's safe to compute the linkage
+    // of the new declaration here.
+    if (New->isExternallyDeclarable()) {
+      assert(Old->isExternallyDeclarable() &&
+             "should not have found a non-externally-declarable previous decl");
+      return true;
+    }
+    return false;
   }
   bool shouldLinkPossiblyHiddenDecl(LookupResult &Old, const NamedDecl *New);
 
@@ -1086,6 +1096,11 @@ public:
   /// definition in this translation unit.
   llvm::MapVector<NamedDecl *, SourceLocation> UndefinedButUsed;
 
+  /// Determine if VD, which must be a variable or function, is an external
+  /// symbol that nonetheless can't be referenced from outside this translation
+  /// unit because its type has no linkage and it's not extern "C".
+  bool isExternalWithNoLinkageType(ValueDecl *VD);
+
   /// Obtain a sorted list of functions that are undefined but ODR-used.
   void getUndefinedButUsed(
       SmallVectorImpl<std::pair<NamedDecl *, SourceLocation> > &Undefined);
@@ -1369,6 +1384,8 @@ public:
                           SourceRange Brackets, DeclarationName Entity);
   QualType BuildExtVectorType(QualType T, Expr *ArraySize,
                               SourceLocation AttrLoc);
+  QualType BuildAddressSpaceAttr(QualType &T, Expr *AddrSpace,
+                                 SourceLocation AttrLoc);
 
   bool CheckFunctionReturnType(QualType T, SourceLocation Loc);
 
@@ -1516,7 +1533,8 @@ private:
                                TypeDiagnoser *Diagnoser);
 
   struct ModuleScope {
-    clang::Module *Module;
+    clang::Module *Module = nullptr;
+    bool ModuleInterface = false;
     VisibleModuleSet OuterVisibleModules;
   };
   /// The modules we're currently parsing.
@@ -1706,7 +1724,6 @@ public:
     ExprResult Expr;
     TemplateName Template;
     ParsedType Type;
-    const IdentifierInfo *Keyword;
 
     explicit NameClassification(NameClassificationKind Kind) : Kind(Kind) {}
 
@@ -1715,8 +1732,7 @@ public:
 
     NameClassification(ParsedType Type) : Kind(NC_Type), Type(Type) {}
 
-    NameClassification(const IdentifierInfo *Keyword)
-      : Kind(NC_Keyword), Keyword(Keyword) { }
+    NameClassification(const IdentifierInfo *Keyword) : Kind(NC_Keyword) {}
 
     static NameClassification Error() {
       return NameClassification(NC_Error);
@@ -2034,9 +2050,9 @@ public:
                               SourceLocation SemiLoc);
 
   enum class ModuleDeclKind {
-    Module,         ///< 'module X;'
+    Interface,      ///< 'export module X;'
+    Implementation, ///< 'module X;'
     Partition,      ///< 'module partition X;'
-    Implementation, ///< 'module implementation X;'
   };
 
   /// The parser has processed a module-declaration that begins the definition
@@ -2689,7 +2705,8 @@ public:
                       OverloadCandidateSet &CandidateSet,
                       TemplateArgumentListInfo *ExplicitTemplateArgs = nullptr,
                       bool SuppressUserConversions = false,
-                      bool PartialOverloading = false);
+                      bool PartialOverloading = false,
+                      bool FirstArgumentIsBase = false);
   void AddMethodCandidate(DeclAccessPair FoundDecl,
                           QualType ObjectType,
                           Expr::Classification ObjectClassification,
@@ -2737,13 +2754,15 @@ public:
                               CXXRecordDecl *ActingContext,
                               Expr *From, QualType ToType,
                               OverloadCandidateSet& CandidateSet,
-                              bool AllowObjCConversionOnExplicit);
+                              bool AllowObjCConversionOnExplicit,
+                              bool AllowResultConversion = true);
   void AddTemplateConversionCandidate(FunctionTemplateDecl *FunctionTemplate,
                                       DeclAccessPair FoundDecl,
                                       CXXRecordDecl *ActingContext,
                                       Expr *From, QualType ToType,
                                       OverloadCandidateSet &CandidateSet,
-                                      bool AllowObjCConversionOnExplicit);
+                                      bool AllowObjCConversionOnExplicit,
+                                      bool AllowResultConversion = true);
   void AddSurrogateCandidate(CXXConversionDecl *Conversion,
                              DeclAccessPair FoundDecl,
                              CXXRecordDecl *ActingContext,
@@ -2782,6 +2801,14 @@ public:
   /// failing attribute, or NULL if they were all successful.
   EnableIfAttr *CheckEnableIf(FunctionDecl *Function, ArrayRef<Expr *> Args,
                               bool MissingImplicitThis = false);
+
+  /// Find the failed Boolean condition within a given Boolean
+  /// constant expression, and describe it with a string.
+  ///
+  /// \param AllowTopLevelCond Whether to allow the result to be the
+  /// complete top-level condition.
+  std::pair<Expr *, std::string>
+  findFailedBooleanCondition(Expr *Cond, bool AllowTopLevelCond);
 
   /// Emit diagnostics for the diagnose_if attributes on Function, ignoring any
   /// non-ArgDependent DiagnoseIfAttrs.
@@ -2893,12 +2920,13 @@ public:
   ExprResult CreateOverloadedUnaryOp(SourceLocation OpLoc,
                                      UnaryOperatorKind Opc,
                                      const UnresolvedSetImpl &Fns,
-                                     Expr *input);
+                                     Expr *input, bool RequiresADL = true);
 
   ExprResult CreateOverloadedBinOp(SourceLocation OpLoc,
                                    BinaryOperatorKind Opc,
                                    const UnresolvedSetImpl &Fns,
-                                   Expr *LHS, Expr *RHS);
+                                   Expr *LHS, Expr *RHS,
+                                   bool RequiresADL = true);
 
   ExprResult CreateOverloadedArraySubscriptExpr(SourceLocation LLoc,
                                                 SourceLocation RLoc,
@@ -3013,9 +3041,24 @@ public:
     /// purpose of redeclaring the name.
     NotForRedeclaration = 0,
     /// \brief The lookup results will be used for redeclaration of a name,
-    /// if an entity by that name already exists.
-    ForRedeclaration
+    /// if an entity by that name already exists and is visible.
+    ForVisibleRedeclaration,
+    /// \brief The lookup results will be used for redeclaration of a name
+    /// with external linkage; non-visible lookup results with external linkage
+    /// may also be found.
+    ForExternalRedeclaration
   };
+
+  RedeclarationKind forRedeclarationInCurContext() {
+    // A declaration with an owning module for linkage can never link against
+    // anything that is not visible. We don't need to check linkage here; if
+    // the context has internal linkage, redeclaration lookup won't find things
+    // from other TUs, and we can't safely compute linkage yet in general.
+    if (cast<Decl>(CurContext)
+            ->getOwningModuleForLinkage(/*IgnoreLinkage*/true))
+      return ForVisibleRedeclaration;
+    return ForExternalRedeclaration;
+  }
 
   /// \brief The possible outcomes of name lookup for a literal operator.
   enum LiteralOperatorLookupResult {
@@ -3243,6 +3286,8 @@ public:
 
   void FilterLookupForScope(LookupResult &R, DeclContext *Ctx, Scope *S,
                             bool ConsiderLinkage, bool AllowInlineNamespace);
+
+  bool CheckRedeclarationModuleOwnership(NamedDecl *New, NamedDecl *Old);
 
   void DiagnoseAmbiguousLookup(LookupResult &Result);
   //@}
@@ -3769,15 +3814,15 @@ public:
                              Expr *AsmString, MultiExprArg Clobbers,
                              SourceLocation RParenLoc);
 
+  void FillInlineAsmIdentifierInfo(Expr *Res,
+                                   llvm::InlineAsmIdentifierInfo &Info);
   ExprResult LookupInlineAsmIdentifier(CXXScopeSpec &SS,
                                        SourceLocation TemplateKWLoc,
                                        UnqualifiedId &Id,
-                                       llvm::InlineAsmIdentifierInfo &Info,
                                        bool IsUnevaluatedContext);
   bool LookupInlineAsmField(StringRef Base, StringRef Member,
                             unsigned &Offset, SourceLocation AsmLoc);
   ExprResult LookupInlineAsmVarDeclField(Expr *RefExpr, StringRef Member,
-                                         llvm::InlineAsmIdentifierInfo &Info,
                                          SourceLocation AsmLoc);
   StmtResult ActOnMSAsmStmt(SourceLocation AsmLoc, SourceLocation LBraceLoc,
                             ArrayRef<Token> AsmToks,
@@ -10164,8 +10209,7 @@ public:
   void CodeCompleteObjCPropertyDefinition(Scope *S);
   void CodeCompleteObjCPropertySynthesizeIvar(Scope *S,
                                               IdentifierInfo *PropertyName);
-  void CodeCompleteObjCMethodDecl(Scope *S,
-                                  bool IsInstanceMethod,
+  void CodeCompleteObjCMethodDecl(Scope *S, Optional<bool> IsInstanceMethod,
                                   ParsedType ReturnType);
   void CodeCompleteObjCMethodDeclSelector(Scope *S,
                                           bool IsInstanceMethod,
@@ -10249,7 +10293,7 @@ private:
   bool CheckPPCBuiltinFunctionCall(unsigned BuiltinID, CallExpr *TheCall);
 
   bool SemaBuiltinVAStart(unsigned BuiltinID, CallExpr *TheCall);
-  bool SemaBuiltinVAStartARM(CallExpr *Call);
+  bool SemaBuiltinVAStartARMMicrosoft(CallExpr *Call);
   bool SemaBuiltinUnorderedCompare(CallExpr *TheCall);
   bool SemaBuiltinFPClassification(CallExpr *TheCall, unsigned NumArgs);
   bool SemaBuiltinVSX(CallExpr *TheCall);
@@ -10490,6 +10534,36 @@ public:
   SmallVector<CXXRecordDecl*, 4> DelayedDllExportClasses;
 
 private:
+  class SavePendingParsedClassStateRAII {
+  public:
+    SavePendingParsedClassStateRAII(Sema &S) : S(S) { swapSavedState(); }
+
+    ~SavePendingParsedClassStateRAII() {
+      assert(S.DelayedExceptionSpecChecks.empty() &&
+             "there shouldn't be any pending delayed exception spec checks");
+      assert(S.DelayedDefaultedMemberExceptionSpecs.empty() &&
+             "there shouldn't be any pending delayed defaulted member "
+             "exception specs");
+      assert(S.DelayedDllExportClasses.empty() &&
+             "there shouldn't be any pending delayed DLL export classes");
+      swapSavedState();
+    }
+
+  private:
+    Sema &S;
+    decltype(DelayedExceptionSpecChecks) SavedExceptionSpecChecks;
+    decltype(DelayedDefaultedMemberExceptionSpecs)
+        SavedDefaultedMemberExceptionSpecs;
+    decltype(DelayedDllExportClasses) SavedDllExportClasses;
+
+    void swapSavedState() {
+      SavedExceptionSpecChecks.swap(S.DelayedExceptionSpecChecks);
+      SavedDefaultedMemberExceptionSpecs.swap(
+          S.DelayedDefaultedMemberExceptionSpecs);
+      SavedDllExportClasses.swap(S.DelayedDllExportClasses);
+    }
+  };
+
   /// \brief Helper class that collects misaligned member designations and
   /// their location info for delayed diagnostics.
   struct MisalignedMember {

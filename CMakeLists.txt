@@ -235,6 +235,17 @@ endif()
 set(CLANG_DEFAULT_OPENMP_RUNTIME "libomp" CACHE STRING
   "Default OpenMP runtime used by -fopenmp.")
 
+# OpenMP offloading requires at least sm_30 because we use shuffle instructions
+# to generate efficient code for reductions.
+set(CLANG_OPENMP_NVPTX_DEFAULT_ARCH "sm_30" CACHE STRING
+  "Default architecture for OpenMP offloading to Nvidia GPUs.")
+string(REGEX MATCH "^sm_([0-9]+)$" MATCHED_ARCH "${CLANG_OPENMP_NVPTX_DEFAULT_ARCH}")
+if (NOT DEFINED MATCHED_ARCH OR "${CMAKE_MATCH_1}" LESS 30)
+  message(WARNING "Resetting default architecture for OpenMP offloading to Nvidia GPUs to sm_30")
+  set(CLANG_OPENMP_NVPTX_DEFAULT_ARCH "sm_30" CACHE STRING
+    "Default architecture for OpenMP offloading to Nvidia GPUs." FORCE)
+endif()
+
 set(CLANG_VENDOR ${PACKAGE_VENDOR} CACHE STRING
   "Vendor-specific text for showing with version information.")
 
@@ -418,6 +429,7 @@ add_subdirectory(include)
 # All targets below may depend on all tablegen'd files.
 get_property(CLANG_TABLEGEN_TARGETS GLOBAL PROPERTY CLANG_TABLEGEN_TARGETS)
 add_custom_target(clang-tablegen-targets DEPENDS ${CLANG_TABLEGEN_TARGETS})
+set_target_properties(clang-tablegen-targets PROPERTIES FOLDER "Misc")
 list(APPEND LLVM_COMMON_DEPENDS clang-tablegen-targets)
 
 # Force target to be built as soon as possible. Clang modules builds depend

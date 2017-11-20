@@ -3084,7 +3084,8 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
   case Builtin::BI__pacxx_read_nctaid_z:
   case Builtin::BI__pacxx_read_nctaid_w:
   case Builtin::BI__pacxx_vec_sqrtf:
-  case Builtin::BI__pacxx_vec_sqrt:{
+  case Builtin::BI__pacxx_vec_sqrt:
+  case Builtin::BI__pacxx_backend_id:{
     llvm::Intrinsic::ID IntrinsicId;
 
     switch (BuiltinID) {
@@ -3171,6 +3172,10 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
     }
     case Builtin::BI__pacxx_read_nctaid_w: {
       IntrinsicId = llvm::Intrinsic::pacxx_read_nctaid_w;
+      break;
+    }
+        case Builtin::BI__pacxx_backend_id: {
+      IntrinsicId = llvm::Intrinsic::pacxx_backend_id;
       break;
     }
     }

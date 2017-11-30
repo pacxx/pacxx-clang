@@ -358,17 +358,6 @@ protected:
     Builder.defineMacro("__ELF__");
     if (Opts.POSIXThreads)
       Builder.defineMacro("_REENTRANT");
-
-    switch (Triple.getArch()) {
-    default:
-      break;
-    case llvm::Triple::arm:
-    case llvm::Triple::armeb:
-    case llvm::Triple::thumb:
-    case llvm::Triple::thumbeb:
-      Builder.defineMacro("__ARM_DWARF_EH__");
-      break;
-    }
   }
 
 public:
@@ -572,6 +561,11 @@ protected:
   void getOSDefines(const LangOptions &Opts, const llvm::Triple &Triple,
                     MacroBuilder &Builder) const override {
     Builder.defineMacro("_WIN32");
+    if (Triple.isArch64Bit())
+      Builder.defineMacro("_WIN64");
+    if (Triple.isWindowsGNUEnvironment())
+      addMinGWDefines(Triple, Opts, Builder);
+
   }
   void getVisualStudioDefines(const LangOptions &Opts,
                               MacroBuilder &Builder) const {

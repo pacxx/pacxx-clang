@@ -98,9 +98,6 @@ bool WebAssembly::isPICDefaultForced() const { return false; }
 
 bool WebAssembly::IsIntegratedAssemblerDefault() const { return true; }
 
-// TODO: Support Objective C stuff.
-bool WebAssembly::SupportsObjCGC() const { return false; }
-
 bool WebAssembly::hasBlocksRuntime() const { return false; }
 
 // TODO: Support profiling.
@@ -136,6 +133,14 @@ void WebAssembly::AddClangCXXStdlibIncludeArgs(const ArgList &DriverArgs,
       !DriverArgs.hasArg(options::OPT_nostdincxx))
     addSystemInclude(DriverArgs, CC1Args,
                      getDriver().SysRoot + "/include/c++/v1");
+}
+
+std::string WebAssembly::getThreadModel() const {
+  // The WebAssembly MVP does not yet support threads; for now, use the
+  // "single" threading model, which lowers atomics to non-atomic operations.
+  // When threading support is standardized and implemented in popular engines,
+  // this override should be removed.
+  return "single";
 }
 
 Tool *WebAssembly::buildLinker() const {

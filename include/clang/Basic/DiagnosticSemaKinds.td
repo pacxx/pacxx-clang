@@ -141,6 +141,10 @@ def err_vla_decl_has_extern_linkage : Error<
   "variable length array declaration cannot have 'extern' linkage">;
 def ext_vla_folded_to_constant : Extension<
   "variable length array folded to constant array as an extension">, InGroup<GNUFoldingConstant>;
+def err_vla_unsupported : Error<
+  "variable length arrays are not supported for the current target">;
+def note_vla_unsupported : Note<
+  "variable length arrays are not supported for the current target">;
 
 // C99 variably modified types
 def err_variably_modified_template_arg : Error<
@@ -2795,55 +2799,26 @@ def err_ifunc_resolver_return : Error<
   "ifunc resolver function must return a pointer">;
 def err_ifunc_resolver_params : Error<
   "ifunc resolver function must have no parameters">;
+def warn_attribute_wrong_decl_type_str : Warning<
+  "%0 attribute only applies to %1">, InGroup<IgnoredAttributes>;
+def err_attribute_wrong_decl_type_str : Error<
+  warn_attribute_wrong_decl_type_str.Text>;
 def warn_attribute_wrong_decl_type : Warning<
   "%0 attribute only applies to %select{"
   "functions"
   "|unions"
   "|variables and functions"
-  "|functions and global variables"
-  "|functions, variables, and Objective-C interfaces"
   "|functions and methods"
-  "|parameters"
   "|functions, methods and blocks"
-  "|functions, methods, and classes"
   "|functions, methods, and parameters"
-  "|functions, methods, and global variables"
-  "|classes"
-  "|enums"
   "|variables"
-  "|methods"
-  "|fields and global variables"
-  "|structs"
-  "|parameters and typedefs"
-  "|variables and typedefs"
-  "|thread-local variables"
   "|variables and fields"
   "|variables, data members and tag types"
   "|types and namespaces"
-  "|Objective-C interfaces"
-  "|methods and properties"
-  "|functions, methods, and properties"
-  "|struct or union"
-  "|struct, union or class"
-  "|types"
-  "|Objective-C instance methods"
-  "|init methods of interface or class extension declarations"
   "|variables, functions and classes"
-  "|functions, variables, classes, and Objective-C interfaces"
-  "|Objective-C protocols"
-  "|variables with static or thread storage duration"
-  "|functions, methods, properties, and global variables"
-  "|structs, unions, and typedefs"
-  "|structs and typedefs"
-  "|interface or protocol declarations"
   "|kernel functions"
   "|non-K&R-style functions"
-  "|variables, enums, fields and typedefs"
-  "|functions, methods, enums, and classes"
-  "|structs, classes, variables, functions, and inline namespaces"
-  "|variables, functions, methods, types, enumerations, enumerators, labels, and non-static data members"
-  "|classes and enumerations"
-  "|named declarations}1">,
+  "|variables, functions, methods, types, enumerations, enumerators, labels, and non-static data members}1">,
   InGroup<IgnoredAttributes>;
 def err_attribute_wrong_decl_type : Error<warn_attribute_wrong_decl_type.Text>;
 def warn_type_attribute_wrong_type : Warning<
@@ -5542,9 +5517,6 @@ def err_offsetof_incomplete_type : Error<
 def err_offsetof_record_type : Error<
   "offsetof requires struct, union, or class type, %0 invalid">;
 def err_offsetof_array_type : Error<"offsetof requires array type, %0 invalid">;
-def ext_offsetof_extended_field_designator : Extension<
-  "using extended field designator is an extension">,
-  InGroup<DiagGroup<"extended-offsetof">>;
 def ext_offsetof_non_pod_type : ExtWarn<"offset of on non-POD type %0">,
   InGroup<InvalidOffsetof>;
 def ext_offsetof_non_standardlayout_type : ExtWarn<
@@ -7947,6 +7919,8 @@ def err_type_tag_for_datatype_too_large : Error<
   "'type_tag_for_datatype' attribute requires the initializer to be "
   "an %select{integer|integral}0 constant expression "
   "that can be represented by a 64 bit integer">;
+def err_tag_index_out_of_range : Error<
+  "%select{type tag|argument}0 index %1 is greater than the number of arguments specified">;
 def warn_type_tag_for_datatype_wrong_kind : Warning<
   "this type tag was not designed to be used with this function">,
   InGroup<TypeSafety>;
@@ -8090,8 +8064,6 @@ def err_switch_incomplete_class_type : Error<
 
 def warn_empty_if_body : Warning<
   "if statement has empty body">, InGroup<EmptyBody>;
-def warn_empty_else_body : Warning<
-  "else clause has empty body">, InGroup<EmptyBody>;
 def warn_empty_for_body : Warning<
   "for loop has empty body">, InGroup<EmptyBody>;
 def warn_empty_range_based_for_body : Warning<
@@ -8985,6 +8957,10 @@ def err_omp_reduction_non_addressable_expression : Error<
   "expected addressable reduction item for the task-based directives">;
 def err_omp_reduction_with_nogroup : Error<
   "'reduction' clause cannot be used with 'nogroup' clause">;
+def err_omp_reduction_vla_unsupported : Error<
+  "cannot generate code for reduction on %select{|array section, which requires a }0variable length array">;
+def err_omp_linear_distribute_var_non_loop_iteration : Error<
+  "only loop iteration variables are allowed in 'linear' clause in distribute directives">;
 } // end of OpenMP category
 
 let CategoryName = "Related Result Type Issue" in {

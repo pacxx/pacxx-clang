@@ -245,12 +245,11 @@ public:
 
   bool SupportsProfiling() const override;
 
-  bool SupportsObjCGC() const override { return false; }
-
   bool UseDwarfDebugFlags() const override;
 
-  bool UseSjLjExceptions(const llvm::opt::ArgList &Args) const override {
-    return false;
+  llvm::ExceptionHandling
+  GetExceptionModel(const llvm::opt::ArgList &Args) const override {
+    return llvm::ExceptionHandling::None;
   }
 
   /// }
@@ -455,11 +454,10 @@ public:
     return 0;
   }
 
-  bool SupportsObjCGC() const override;
-
   void CheckObjCARC() const override;
 
-  bool UseSjLjExceptions(const llvm::opt::ArgList &Args) const override;
+  llvm::ExceptionHandling GetExceptionModel(
+      const llvm::opt::ArgList &Args) const override;
 
   bool SupportsEmbeddedBitcode() const override;
 

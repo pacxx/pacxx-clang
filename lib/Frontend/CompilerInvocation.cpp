@@ -546,6 +546,8 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
     OPT_fuse_register_sized_bitfield_access);
   Opts.RelaxedAliasing = Args.hasArg(OPT_relaxed_aliasing);
   Opts.StructPathTBAA = !Args.hasArg(OPT_no_struct_path_tbaa);
+  Opts.NewStructPathTBAA = !Args.hasArg(OPT_no_struct_path_tbaa) &&
+                           Args.hasArg(OPT_new_struct_path_tbaa);
   Opts.FineGrainedBitfieldAccesses =
       Args.hasFlag(OPT_ffine_grained_bitfield_accesses,
                    OPT_fno_fine_grained_bitfield_accesses, false);
@@ -640,6 +642,7 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
   Opts.FlushDenorm = Args.hasArg(OPT_cl_denorms_are_zero);
   Opts.CorrectlyRoundedDivSqrt =
       Args.hasArg(OPT_cl_fp32_correctly_rounded_divide_sqrt);
+  Opts.Reciprocals = Args.getAllArgValues(OPT_mrecip_EQ);
   Opts.ReciprocalMath = Args.hasArg(OPT_freciprocal_math);
   Opts.NoTrappingMath = Args.hasArg(OPT_fno_trapping_math);
   Opts.NoZeroInitializedInBSS = Args.hasArg(OPT_mno_zero_initialized_in_bss);
@@ -779,7 +782,11 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
   Opts.InstrumentFunctions = Args.hasArg(OPT_finstrument_functions);
   Opts.InstrumentFunctionsAfterInlining =
       Args.hasArg(OPT_finstrument_functions_after_inlining);
+  Opts.InstrumentFunctionEntryBare =
+      Args.hasArg(OPT_finstrument_function_entry_bare);
   Opts.XRayInstrumentFunctions = Args.hasArg(OPT_fxray_instrument);
+  Opts.XRayAlwaysEmitCustomEvents =
+      Args.hasArg(OPT_fxray_always_emit_customevents);
   Opts.XRayInstructionThreshold =
       getLastArgIntValue(Args, OPT_fxray_instruction_threshold_EQ, 200, Diags);
   Opts.InstrumentForProfiling = Args.hasArg(OPT_pg);
@@ -2138,7 +2145,18 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
   Opts.Exceptions = Args.hasArg(OPT_fexceptions);
   Opts.ObjCExceptions = Args.hasArg(OPT_fobjc_exceptions);
   Opts.CXXExceptions = Args.hasArg(OPT_fcxx_exceptions);
-  Opts.SjLjExceptions = Args.hasArg(OPT_fsjlj_exceptions);
+
+  // Handle exception personalities
+  Arg *A = Args.getLastArg(options::OPT_fsjlj_exceptions,
+                           options::OPT_fseh_exceptions,
+                           options::OPT_fdwarf_exceptions);
+  if (A) {
+    const Option &Opt = A->getOption();
+    Opts.SjLjExceptions = Opt.matches(options::OPT_fsjlj_exceptions);
+    Opts.SEHExceptions = Opt.matches(options::OPT_fseh_exceptions);
+    Opts.DWARFExceptions = Opt.matches(options::OPT_fdwarf_exceptions);
+  }
+
   Opts.ExternCNoUnwind = Args.hasArg(OPT_fexternc_nounwind);
   Opts.TraditionalCPP = Args.hasArg(OPT_traditional_cpp);
 
@@ -2489,6 +2507,11 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
   Opts.XRayInstrument =
       Args.hasFlag(OPT_fxray_instrument, OPT_fnoxray_instrument, false);
 
+  // -fxray-always-emit-customevents
+  Opts.XRayAlwaysEmitCustomEvents =
+      Args.hasFlag(OPT_fxray_always_emit_customevents,
+                   OPT_fnoxray_always_emit_customevents, false);
+
   // -fxray-{always,never}-instrument= filenames.
   Opts.XRayAlwaysInstrumentFiles =
       Args.getAllArgValues(OPT_fxray_always_instrument);
@@ -2667,7 +2690,6 @@ static void ParseTargetArgs(TargetOptions &Opts, ArgList &Args,
   Opts.FeaturesAsWritten = Args.getAllArgValues(OPT_target_feature);
   Opts.LinkerVersion = Args.getLastArgValue(OPT_target_linker_version);
   Opts.Triple = llvm::Triple::normalize(Args.getLastArgValue(OPT_triple));
-  Opts.Reciprocals = Args.getAllArgValues(OPT_mrecip_EQ);
   // Use the default target triple if unspecified.
   if (Opts.Triple.empty())
     Opts.Triple = llvm::sys::getDefaultTargetTriple();

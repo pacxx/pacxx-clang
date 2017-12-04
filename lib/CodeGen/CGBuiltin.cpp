@@ -866,8 +866,193 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
                                                Result.Val.getFloat()));
   }
 
+  // There are LLVM math intrinsics/instructions corresponding to math library
+  // functions except the LLVM op will never set errno while the math library
+  // might. Also, math builtins have the same semantics as their math library
+  // twins. Thus, we can transform math library and builtin calls to their
+  // LLVM counterparts if the call is marked 'const' (known to never set errno).
+  if (FD->hasAttr<ConstAttr>()) {
+    switch (BuiltinID) {
+    case Builtin::BIceil:
+    case Builtin::BIceilf:
+    case Builtin::BIceill:
+    case Builtin::BI__builtin_ceil:
+    case Builtin::BI__builtin_ceilf:
+    case Builtin::BI__builtin_ceill:
+      return RValue::get(emitUnaryBuiltin(*this, E, Intrinsic::ceil));
+
+    case Builtin::BIcopysign:
+    case Builtin::BIcopysignf:
+    case Builtin::BIcopysignl:
+    case Builtin::BI__builtin_copysign:
+    case Builtin::BI__builtin_copysignf:
+    case Builtin::BI__builtin_copysignl:
+      return RValue::get(emitBinaryBuiltin(*this, E, Intrinsic::copysign));
+
+    case Builtin::BIcos:
+    case Builtin::BIcosf:
+    case Builtin::BIcosl:
+    case Builtin::BI__builtin_cos:
+    case Builtin::BI__builtin_cosf:
+    case Builtin::BI__builtin_cosl:
+      return RValue::get(emitUnaryBuiltin(*this, E, Intrinsic::cos));
+
+    case Builtin::BIexp:
+    case Builtin::BIexpf:
+    case Builtin::BIexpl:
+    case Builtin::BI__builtin_exp:
+    case Builtin::BI__builtin_expf:
+    case Builtin::BI__builtin_expl:
+      return RValue::get(emitUnaryBuiltin(*this, E, Intrinsic::exp));
+
+    case Builtin::BIexp2:
+    case Builtin::BIexp2f:
+    case Builtin::BIexp2l:
+    case Builtin::BI__builtin_exp2:
+    case Builtin::BI__builtin_exp2f:
+    case Builtin::BI__builtin_exp2l:
+      return RValue::get(emitUnaryBuiltin(*this, E, Intrinsic::exp2));
+
+    case Builtin::BIfabs:
+    case Builtin::BIfabsf:
+    case Builtin::BIfabsl:
+    case Builtin::BI__builtin_fabs:
+    case Builtin::BI__builtin_fabsf:
+    case Builtin::BI__builtin_fabsl:
+      return RValue::get(emitUnaryBuiltin(*this, E, Intrinsic::fabs));
+
+    case Builtin::BIfloor:
+    case Builtin::BIfloorf:
+    case Builtin::BIfloorl:
+    case Builtin::BI__builtin_floor:
+    case Builtin::BI__builtin_floorf:
+    case Builtin::BI__builtin_floorl:
+      return RValue::get(emitUnaryBuiltin(*this, E, Intrinsic::floor));
+
+    case Builtin::BIfma:
+    case Builtin::BIfmaf:
+    case Builtin::BIfmal:
+    case Builtin::BI__builtin_fma:
+    case Builtin::BI__builtin_fmaf:
+    case Builtin::BI__builtin_fmal:
+      return RValue::get(emitTernaryBuiltin(*this, E, Intrinsic::fma));
+
+    case Builtin::BIfmax:
+    case Builtin::BIfmaxf:
+    case Builtin::BIfmaxl:
+    case Builtin::BI__builtin_fmax:
+    case Builtin::BI__builtin_fmaxf:
+    case Builtin::BI__builtin_fmaxl:
+      return RValue::get(emitBinaryBuiltin(*this, E, Intrinsic::maxnum));
+
+    case Builtin::BIfmin:
+    case Builtin::BIfminf:
+    case Builtin::BIfminl:
+    case Builtin::BI__builtin_fmin:
+    case Builtin::BI__builtin_fminf:
+    case Builtin::BI__builtin_fminl:
+      return RValue::get(emitBinaryBuiltin(*this, E, Intrinsic::minnum));
+
+    // fmod() is a special-case. It maps to the frem instruction rather than an
+    // LLVM intrinsic.
+    case Builtin::BIfmod:
+    case Builtin::BIfmodf:
+    case Builtin::BIfmodl:
+    case Builtin::BI__builtin_fmod:
+    case Builtin::BI__builtin_fmodf:
+    case Builtin::BI__builtin_fmodl: {
+      Value *Arg1 = EmitScalarExpr(E->getArg(0));
+      Value *Arg2 = EmitScalarExpr(E->getArg(1));
+      return RValue::get(Builder.CreateFRem(Arg1, Arg2, "fmod"));
+    }
+
+    case Builtin::BIlog:
+    case Builtin::BIlogf:
+    case Builtin::BIlogl:
+    case Builtin::BI__builtin_log:
+    case Builtin::BI__builtin_logf:
+    case Builtin::BI__builtin_logl:
+      return RValue::get(emitUnaryBuiltin(*this, E, Intrinsic::log));
+
+    case Builtin::BIlog10:
+    case Builtin::BIlog10f:
+    case Builtin::BIlog10l:
+    case Builtin::BI__builtin_log10:
+    case Builtin::BI__builtin_log10f:
+    case Builtin::BI__builtin_log10l:
+      return RValue::get(emitUnaryBuiltin(*this, E, Intrinsic::log10));
+
+    case Builtin::BIlog2:
+    case Builtin::BIlog2f:
+    case Builtin::BIlog2l:
+    case Builtin::BI__builtin_log2:
+    case Builtin::BI__builtin_log2f:
+    case Builtin::BI__builtin_log2l:
+      return RValue::get(emitUnaryBuiltin(*this, E, Intrinsic::log2));
+
+    case Builtin::BInearbyint:
+    case Builtin::BInearbyintf:
+    case Builtin::BInearbyintl:
+    case Builtin::BI__builtin_nearbyint:
+    case Builtin::BI__builtin_nearbyintf:
+    case Builtin::BI__builtin_nearbyintl:
+      return RValue::get(emitUnaryBuiltin(*this, E, Intrinsic::nearbyint));
+
+    case Builtin::BIpow:
+    case Builtin::BIpowf:
+    case Builtin::BIpowl:
+    case Builtin::BI__builtin_pow:
+    case Builtin::BI__builtin_powf:
+    case Builtin::BI__builtin_powl:
+      return RValue::get(emitBinaryBuiltin(*this, E, Intrinsic::pow));
+
+    case Builtin::BIrint:
+    case Builtin::BIrintf:
+    case Builtin::BIrintl:
+    case Builtin::BI__builtin_rint:
+    case Builtin::BI__builtin_rintf:
+    case Builtin::BI__builtin_rintl:
+      return RValue::get(emitUnaryBuiltin(*this, E, Intrinsic::rint));
+
+    case Builtin::BIround:
+    case Builtin::BIroundf:
+    case Builtin::BIroundl:
+    case Builtin::BI__builtin_round:
+    case Builtin::BI__builtin_roundf:
+    case Builtin::BI__builtin_roundl:
+      return RValue::get(emitUnaryBuiltin(*this, E, Intrinsic::round));
+
+    case Builtin::BIsin:
+    case Builtin::BIsinf:
+    case Builtin::BIsinl:
+    case Builtin::BI__builtin_sin:
+    case Builtin::BI__builtin_sinf:
+    case Builtin::BI__builtin_sinl:
+      return RValue::get(emitUnaryBuiltin(*this, E, Intrinsic::sin));
+
+    case Builtin::BIsqrt:
+    case Builtin::BIsqrtf:
+    case Builtin::BIsqrtl:
+    case Builtin::BI__builtin_sqrt:
+    case Builtin::BI__builtin_sqrtf:
+    case Builtin::BI__builtin_sqrtl:
+      return RValue::get(emitUnaryBuiltin(*this, E, Intrinsic::sqrt));
+
+    case Builtin::BItrunc:
+    case Builtin::BItruncf:
+    case Builtin::BItruncl:
+    case Builtin::BI__builtin_trunc:
+    case Builtin::BI__builtin_truncf:
+    case Builtin::BI__builtin_truncl:
+      return RValue::get(emitUnaryBuiltin(*this, E, Intrinsic::trunc));
+
+    default:
+      break;
+    }
+  }
+
   switch (BuiltinID) {
-  default: break;  // Handle intrinsics and libm functions below.
+  default: break;
   case Builtin::BI__builtin___CFStringMakeConstantString:
   case Builtin::BI__builtin___NSStringMakeConstantString:
     return RValue::get(ConstantEmitter(*this).emitAbstract(E, E->getType()));
@@ -905,64 +1090,6 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
       Builder.CreateSelect(CmpResult, ArgValue, NegOp, "abs");
 
     return RValue::get(Result);
-  }
-  case Builtin::BI__builtin_fabs:
-  case Builtin::BI__builtin_fabsf:
-  case Builtin::BI__builtin_fabsl: {
-    return RValue::get(emitUnaryBuiltin(*this, E, Intrinsic::fabs));
-  }
-  case Builtin::BI__builtin_fmod:
-  case Builtin::BI__builtin_fmodf:
-  case Builtin::BI__builtin_fmodl: {
-    Value *Arg1 = EmitScalarExpr(E->getArg(0));
-    Value *Arg2 = EmitScalarExpr(E->getArg(1));
-    Value *Result = Builder.CreateFRem(Arg1, Arg2, "fmod");
-    return RValue::get(Result);
-  }
-  case Builtin::BI__builtin_copysign:
-  case Builtin::BI__builtin_copysignf:
-  case Builtin::BI__builtin_copysignl: {
-    return RValue::get(emitBinaryBuiltin(*this, E, Intrinsic::copysign));
-  }
-  case Builtin::BI__builtin_ceil:
-  case Builtin::BI__builtin_ceilf:
-  case Builtin::BI__builtin_ceill: {
-    return RValue::get(emitUnaryBuiltin(*this, E, Intrinsic::ceil));
-  }
-  case Builtin::BI__builtin_floor:
-  case Builtin::BI__builtin_floorf:
-  case Builtin::BI__builtin_floorl: {
-    return RValue::get(emitUnaryBuiltin(*this, E, Intrinsic::floor));
-  }
-  case Builtin::BI__builtin_trunc:
-  case Builtin::BI__builtin_truncf:
-  case Builtin::BI__builtin_truncl: {
-    return RValue::get(emitUnaryBuiltin(*this, E, Intrinsic::trunc));
-  }
-  case Builtin::BI__builtin_rint:
-  case Builtin::BI__builtin_rintf:
-  case Builtin::BI__builtin_rintl: {
-    return RValue::get(emitUnaryBuiltin(*this, E, Intrinsic::rint));
-  }
-  case Builtin::BI__builtin_nearbyint:
-  case Builtin::BI__builtin_nearbyintf:
-  case Builtin::BI__builtin_nearbyintl: {
-    return RValue::get(emitUnaryBuiltin(*this, E, Intrinsic::nearbyint));
-  }
-  case Builtin::BI__builtin_round:
-  case Builtin::BI__builtin_roundf:
-  case Builtin::BI__builtin_roundl: {
-    return RValue::get(emitUnaryBuiltin(*this, E, Intrinsic::round));
-  }
-  case Builtin::BI__builtin_fmin:
-  case Builtin::BI__builtin_fminf:
-  case Builtin::BI__builtin_fminl: {
-    return RValue::get(emitBinaryBuiltin(*this, E, Intrinsic::minnum));
-  }
-  case Builtin::BI__builtin_fmax:
-  case Builtin::BI__builtin_fmaxf:
-  case Builtin::BI__builtin_fmaxl: {
-    return RValue::get(emitBinaryBuiltin(*this, E, Intrinsic::maxnum));
   }
   case Builtin::BI__builtin_conj:
   case Builtin::BI__builtin_conjf:
@@ -2085,49 +2212,6 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
     return RValue::get(nullptr);
   }
 
-  case Builtin::BIsqrt:
-  case Builtin::BIsqrtf:
-  case Builtin::BIsqrtl:
-    // Builtins have the same semantics as library functions. The LLVM intrinsic
-    // has the same semantics as the library function except it does not set
-    // errno. Thus, we can transform either sqrt or __builtin_sqrt to @llvm.sqrt
-    // if the call is 'const' (the call must not set errno).
-    //
-    // FIXME: The builtin cases are not here because they are marked 'const' in
-    // Builtins.def. So that means they are wrongly defined to have different
-    // semantics than the library functions. If we included them here, we would
-    // turn them into LLVM intrinsics regardless of whether -fmath-errno was on.
-    if (FD->hasAttr<ConstAttr>())
-      return RValue::get(emitUnaryBuiltin(*this, E, Intrinsic::sqrt));
-    break;
-
-  case Builtin::BI__builtin_pow:
-  case Builtin::BI__builtin_powf:
-  case Builtin::BI__builtin_powl:
-  case Builtin::BIpow:
-  case Builtin::BIpowf:
-  case Builtin::BIpowl: {
-    // Transform a call to pow* into a @llvm.pow.* intrinsic call.
-    if (!FD->hasAttr<ConstAttr>())
-      break;
-    Value *Base = EmitScalarExpr(E->getArg(0));
-    Value *Exponent = EmitScalarExpr(E->getArg(1));
-    llvm::Type *ArgType = Base->getType();
-    Value *F = CGM.getIntrinsic(Intrinsic::pow, ArgType);
-    return RValue::get(Builder.CreateCall(F, {Base, Exponent}));
-  }
-
-  case Builtin::BIfma:
-  case Builtin::BIfmaf:
-  case Builtin::BIfmal:
-  case Builtin::BI__builtin_fma:
-  case Builtin::BI__builtin_fmaf:
-  case Builtin::BI__builtin_fmal:
-    // A constant libcall or builtin is equivalent to the LLVM intrinsic.
-    if (FD->hasAttr<ConstAttr>())
-      return RValue::get(emitTernaryBuiltin(*this, E, Intrinsic::fma));
-    break;
-
   case Builtin::BI__builtin_signbit:
   case Builtin::BI__builtin_signbitf:
   case Builtin::BI__builtin_signbitl: {
@@ -3015,10 +3099,10 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
   case Builtin::BI__xray_customevent: {
     if (!ShouldXRayInstrumentFunction())
       return RValue::getIgnored();
-    if (const auto *XRayAttr = CurFuncDecl->getAttr<XRayInstrumentAttr>()) {
-      if (XRayAttr->neverXRayInstrument())
+    if (const auto *XRayAttr = CurFuncDecl->getAttr<XRayInstrumentAttr>())
+      if (XRayAttr->neverXRayInstrument() && !AlwaysEmitXRayCustomEvents())
         return RValue::getIgnored();
-    }
+
     Function *F = CGM.getIntrinsic(Intrinsic::xray_customevent);
     auto FTy = F->getFunctionType();
     auto Arg0 = E->getArg(0);
@@ -7676,82 +7760,16 @@ Value *CodeGenFunction::EmitX86CpuSupports(const CallExpr *E) {
 }
 
 Value *CodeGenFunction::EmitX86CpuSupports(ArrayRef<StringRef> FeatureStrs) {
-  // TODO: When/if this becomes more than x86 specific then use a TargetInfo
-  // based mapping.
   // Processor features and mapping to processor feature value.
-  enum X86Features {
-    CMOV = 0,
-    MMX,
-    POPCNT,
-    SSE,
-    SSE2,
-    SSE3,
-    SSSE3,
-    SSE4_1,
-    SSE4_2,
-    AVX,
-    AVX2,
-    SSE4_A,
-    FMA4,
-    XOP,
-    FMA,
-    AVX512F,
-    BMI,
-    BMI2,
-    AES,
-    PCLMUL,
-    AVX512VL,
-    AVX512BW,
-    AVX512DQ,
-    AVX512CD,
-    AVX512ER,
-    AVX512PF,
-    AVX512VBMI,
-    AVX512IFMA,
-    AVX5124VNNIW,
-    AVX5124FMAPS,
-    AVX512VPOPCNTDQ,
-    MAX
-  };
 
   uint32_t FeaturesMask = 0;
 
   for (const StringRef &FeatureStr : FeatureStrs) {
-    X86Features Feature =
-        StringSwitch<X86Features>(FeatureStr)
-            .Case("cmov", X86Features::CMOV)
-            .Case("mmx", X86Features::MMX)
-            .Case("popcnt", X86Features::POPCNT)
-            .Case("sse", X86Features::SSE)
-            .Case("sse2", X86Features::SSE2)
-            .Case("sse3", X86Features::SSE3)
-            .Case("ssse3", X86Features::SSSE3)
-            .Case("sse4.1", X86Features::SSE4_1)
-            .Case("sse4.2", X86Features::SSE4_2)
-            .Case("avx", X86Features::AVX)
-            .Case("avx2", X86Features::AVX2)
-            .Case("sse4a", X86Features::SSE4_A)
-            .Case("fma4", X86Features::FMA4)
-            .Case("xop", X86Features::XOP)
-            .Case("fma", X86Features::FMA)
-            .Case("avx512f", X86Features::AVX512F)
-            .Case("bmi", X86Features::BMI)
-            .Case("bmi2", X86Features::BMI2)
-            .Case("aes", X86Features::AES)
-            .Case("pclmul", X86Features::PCLMUL)
-            .Case("avx512vl", X86Features::AVX512VL)
-            .Case("avx512bw", X86Features::AVX512BW)
-            .Case("avx512dq", X86Features::AVX512DQ)
-            .Case("avx512cd", X86Features::AVX512CD)
-            .Case("avx512er", X86Features::AVX512ER)
-            .Case("avx512pf", X86Features::AVX512PF)
-            .Case("avx512vbmi", X86Features::AVX512VBMI)
-            .Case("avx512ifma", X86Features::AVX512IFMA)
-            .Case("avx5124vnniw", X86Features::AVX5124VNNIW)
-            .Case("avx5124fmaps", X86Features::AVX5124FMAPS)
-            .Case("avx512vpopcntdq", X86Features::AVX512VPOPCNTDQ)
-            .Default(X86Features::MAX);
-    assert(Feature != X86Features::MAX && "Invalid feature!");
+    unsigned Feature =
+        StringSwitch<unsigned>(FeatureStr)
+#define X86_FEATURE_COMPAT(VAL, ENUM, STR) .Case(STR, VAL)
+#include "llvm/Support/X86TargetParser.def"
+        ;
     FeaturesMask |= (1U << Feature);
   }
 

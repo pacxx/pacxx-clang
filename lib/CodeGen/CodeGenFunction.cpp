@@ -355,10 +355,11 @@ void CodeGenFunction::FinishFunction(SourceLocation EndLoc) {
   llvm::DebugLoc Loc = EmitReturnBlock();
 
   if (ShouldInstrumentFunction()) {
-    CurFn->addFnAttr(!CGM.getCodeGenOpts().InstrumentFunctionsAfterInlining
-                         ? "instrument-function-exit"
-                         : "instrument-function-exit-inlined",
-                     "__cyg_profile_func_exit");
+    if (CGM.getCodeGenOpts().InstrumentFunctions)
+      CurFn->addFnAttr("instrument-function-exit", "__cyg_profile_func_exit");
+    if (CGM.getCodeGenOpts().InstrumentFunctionsAfterInlining)
+      CurFn->addFnAttr("instrument-function-exit-inlined",
+                       "__cyg_profile_func_exit");
   }
 
   // Emit debug descriptor for function end.
@@ -443,7 +444,8 @@ void CodeGenFunction::FinishFunction(SourceLocation EndLoc) {
 /// instrumented with __cyg_profile_func_* calls
 bool CodeGenFunction::ShouldInstrumentFunction() {
   if (!CGM.getCodeGenOpts().InstrumentFunctions &&
-      !CGM.getCodeGenOpts().InstrumentFunctionsAfterInlining)
+      !CGM.getCodeGenOpts().InstrumentFunctionsAfterInlining &&
+      !CGM.getCodeGenOpts().InstrumentFunctionEntryBare)
     return false;
   if (!CurFuncDecl || CurFuncDecl->hasAttr<NoInstrumentFunctionAttr>())
     return false;
@@ -454,6 +456,12 @@ bool CodeGenFunction::ShouldInstrumentFunction() {
 /// instrumented with XRay nop sleds.
 bool CodeGenFunction::ShouldXRayInstrumentFunction() const {
   return CGM.getCodeGenOpts().XRayInstrumentFunctions;
+}
+
+/// AlwaysEmitXRayCustomEvents - Return true if we should emit IR for calls to
+/// the __xray_customevent(...) builin calls, when doing XRay instrumentation.
+bool CodeGenFunction::AlwaysEmitXRayCustomEvents() const {
+  return CGM.getCodeGenOpts().XRayAlwaysEmitCustomEvents;
 }
 
 llvm::Constant *
@@ -1042,10 +1050,14 @@ void CodeGenFunction::StartFunction(GlobalDecl GD,
   }
 
   if (ShouldInstrumentFunction()) {
-    Fn->addFnAttr(!CGM.getCodeGenOpts().InstrumentFunctionsAfterInlining
-                      ? "instrument-function-entry"
-                      : "instrument-function-entry-inlined",
-                  "__cyg_profile_func_enter");
+    if (CGM.getCodeGenOpts().InstrumentFunctions)
+      CurFn->addFnAttr("instrument-function-entry", "__cyg_profile_func_enter");
+    if (CGM.getCodeGenOpts().InstrumentFunctionsAfterInlining)
+      CurFn->addFnAttr("instrument-function-entry-inlined",
+                       "__cyg_profile_func_enter");
+    if (CGM.getCodeGenOpts().InstrumentFunctionEntryBare)
+      CurFn->addFnAttr("instrument-function-entry-inlined",
+                       "__cyg_profile_func_enter_bare");
   }
 
   // Since emitting the mcount call here impacts optimizations such as function

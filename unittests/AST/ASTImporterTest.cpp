@@ -525,6 +525,104 @@ TEST(ImportType, ImportPackExpansion) {
                                          declRefExpr()))))))))));
 }
 
+/// \brief Matches __builtin_types_compatible_p:
+/// GNU extension to check equivalent types
+/// Given
+/// \code
+///   __builtin_types_compatible_p(int, int)
+/// \endcode
+//  will generate TypeTraitExpr <...> 'int'
+const internal::VariadicDynCastAllOfMatcher<Stmt, TypeTraitExpr> typeTraitExpr;
+
+TEST(ImportExpr, ImportTypeTraitExpr) {
+  MatchVerifier<Decl> Verifier;
+  EXPECT_TRUE(testImport("void declToImport() { "
+                         "  __builtin_types_compatible_p(int, int);"
+                         "}",
+                         Lang_C, "", Lang_C, Verifier,
+                         functionDecl(
+                           hasBody(
+                             compoundStmt(
+                               has(
+                                 typeTraitExpr(hasType(asString("int")))))))));
+}
+
+TEST(ImportExpr, ImportTypeTraitExprValDep) {
+  MatchVerifier<Decl> Verifier;
+  EXPECT_TRUE(testImport("template<typename T> struct declToImport {"
+                         "  void m() { __is_pod(T); }"
+                         "};"
+                         "void f() { declToImport<int>().m(); }",
+                         Lang_CXX11, "", Lang_CXX11, Verifier,
+                         classTemplateDecl(
+                           has(
+                             cxxRecordDecl(
+                               has(
+                                 functionDecl(
+                                   hasBody(
+                                     compoundStmt(
+                                       has(
+                                         typeTraitExpr(
+                                           hasType(booleanType())
+                                           )))))))))));
+}
+
+const internal::VariadicDynCastAllOfMatcher<Expr, CXXPseudoDestructorExpr>
+    cxxPseudoDestructorExpr;
+
+TEST(ImportExpr, ImportCXXPseudoDestructorExpr) {
+  MatchVerifier<Decl> Verifier;
+  EXPECT_TRUE(
+      testImport("typedef int T;"
+                 "void declToImport(int *p) {"
+                 "  T t;"
+                 "  p->T::~T();"
+                 "}",
+                 Lang_CXX, "", Lang_CXX, Verifier,
+                 functionDecl(has(compoundStmt(has(
+                     callExpr(has(cxxPseudoDestructorExpr()))))))));
+}
+
+TEST(ImportDecl, ImportUsingDecl) {
+  MatchVerifier<Decl> Verifier;
+  EXPECT_TRUE(
+        testImport(
+          "namespace foo { int bar; }"
+          "int declToImport(){ using foo::bar; }",
+          Lang_CXX, "", Lang_CXX, Verifier,
+          functionDecl(
+            has(
+              compoundStmt(
+                has(
+                  declStmt(
+                    has(
+                      usingDecl()))))))));
+}
+
+/// \brief Matches shadow declarations introduced into a scope by a
+///        (resolved) using declaration.
+///
+/// Given
+/// \code
+///   namespace n { int f; }
+///   namespace declToImport { using n::f; }
+/// \endcode
+/// usingShadowDecl()
+///   matches \code f \endcode
+const internal::VariadicDynCastAllOfMatcher<Decl,
+                                            UsingShadowDecl> usingShadowDecl;
+
+TEST(ImportDecl, ImportUsingShadowDecl) {
+  MatchVerifier<Decl> Verifier;
+  EXPECT_TRUE(
+        testImport(
+          "namespace foo { int bar; }"
+          "namespace declToImport { using foo::bar; }",
+          Lang_CXX, "", Lang_CXX, Verifier,
+          namespaceDecl(
+            has(
+              usingShadowDecl()))));
+}
 
 } // end namespace ast_matchers
 } // end namespace clang

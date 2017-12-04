@@ -1869,7 +1869,7 @@ static void CollectArgsForIntegratedAssembler(Compilation &C,
   // arg after parsing the '-I' arg.
   bool TakeNextArg = false;
 
-  bool UseRelaxRelocations = ENABLE_X86_RELAX_RELOCATIONS;
+  bool UseRelaxRelocations = C.getDefaultToolChain().useRelaxRelocations();
   const char *MipsTargetFeature = nullptr;
   for (const Arg *A :
        Args.filtered(options::OPT_Wa_COMMA, options::OPT_Xassembler)) {
@@ -1888,6 +1888,15 @@ static void CollectArgsForIntegratedAssembler(Compilation &C,
 
       switch (C.getDefaultToolChain().getArch()) {
       default:
+        break;
+      case llvm::Triple::thumb:
+      case llvm::Triple::thumbeb:
+      case llvm::Triple::arm:
+      case llvm::Triple::armeb:
+        if (Value == "-mthumb")
+          // -mthumb has already been processed in ComputeLLVMTriple()
+          // recognize but skip over here.
+          continue;
         break;
       case llvm::Triple::mips:
       case llvm::Triple::mipsel:
@@ -3545,8 +3554,11 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                     options::OPT_fno_unique_section_names, true))
     CmdArgs.push_back("-fno-unique-section-names");
 
-  Args.AddLastArg(CmdArgs, options::OPT_finstrument_functions,
-                  options::OPT_finstrument_functions_after_inlining);
+  if (auto *A = Args.getLastArg(
+      options::OPT_finstrument_functions,
+      options::OPT_finstrument_functions_after_inlining,
+      options::OPT_finstrument_function_entry_bare))
+    A->render(Args, CmdArgs);
 
   addPGOAndCoverageFlags(C, D, Output, Args, CmdArgs);
 
@@ -4158,9 +4170,33 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     addExceptionArgs(Args, InputType, getToolChain(), KernelOrKext, Runtime,
                      CmdArgs);
 
-  if (Args.hasArg(options::OPT_fsjlj_exceptions) ||
-      getToolChain().UseSjLjExceptions(Args))
-    CmdArgs.push_back("-fsjlj-exceptions");
+  // Handle exception personalities
+  Arg *A = Args.getLastArg(options::OPT_fsjlj_exceptions,
+                           options::OPT_fseh_exceptions,
+                           options::OPT_fdwarf_exceptions);
+  if (A) {
+    const Option &Opt = A->getOption();
+    if (Opt.matches(options::OPT_fsjlj_exceptions))
+      CmdArgs.push_back("-fsjlj-exceptions");
+    if (Opt.matches(options::OPT_fseh_exceptions))
+      CmdArgs.push_back("-fseh-exceptions");
+    if (Opt.matches(options::OPT_fdwarf_exceptions))
+      CmdArgs.push_back("-fdwarf-exceptions");
+  } else {
+    switch (getToolChain().GetExceptionModel(Args)) {
+    default:
+      break;
+    case llvm::ExceptionHandling::DwarfCFI:
+      CmdArgs.push_back("-fdwarf-exceptions");
+      break;
+    case llvm::ExceptionHandling::SjLj:
+      CmdArgs.push_back("-fsjlj-exceptions");
+      break;
+    case llvm::ExceptionHandling::WinEH:
+      CmdArgs.push_back("-fseh-exceptions");
+      break;
+    }
+  }
 
   // C++ "sane" operator new.
   if (!Args.hasFlag(options::OPT_fassume_sane_operator_new,
@@ -5305,12 +5341,15 @@ void OffloadBundler::ConstructJob(Compilation &C, const JobAction &JA,
     if (I)
       Triples += ',';
 
+    // Find ToolChain for this input.
     Action::OffloadKind CurKind = Action::OFK_Host;
     const ToolChain *CurTC = &getToolChain();
     const Action *CurDep = JA.getInputs()[I];
 
     if (const auto *OA = dyn_cast<OffloadAction>(CurDep)) {
+      CurTC = nullptr;
       OA->doOnEachDependence([&](Action *A, const ToolChain *TC, const char *) {
+        assert(CurTC == nullptr && "Expected one dependence!");
         CurKind = A->getOffloadingDeviceKind();
         CurTC = TC;
       });
@@ -5331,7 +5370,17 @@ void OffloadBundler::ConstructJob(Compilation &C, const JobAction &JA,
   for (unsigned I = 0; I < Inputs.size(); ++I) {
     if (I)
       UB += ',';
-    UB += Inputs[I].getFilename();
+
+    // Find ToolChain for this input.
+    const ToolChain *CurTC = &getToolChain();
+    if (const auto *OA = dyn_cast<OffloadAction>(JA.getInputs()[I])) {
+      CurTC = nullptr;
+      OA->doOnEachDependence([&](Action *, const ToolChain *TC, const char *) {
+        assert(CurTC == nullptr && "Expected one dependence!");
+        CurTC = TC;
+      });
+    }
+    UB += CurTC->getInputFilename(Inputs[I]);
   }
   CmdArgs.push_back(TCArgs.MakeArgString(UB));
 
@@ -5391,13 +5440,7 @@ void OffloadBundler::ConstructJobMultipleOutputs(
   for (unsigned I = 0; I < Outputs.size(); ++I) {
     if (I)
       UB += ',';
-    SmallString<256> OutputFileName(Outputs[I].getFilename());
-    // Change extension of target files for OpenMP offloading
-    // to NVIDIA GPUs.
-    if (DepInfo[I].DependentToolChain->getTriple().isNVPTX() &&
-        JA.isOffloading(Action::OFK_OpenMP))
-      llvm::sys::path::replace_extension(OutputFileName, "cubin");
-    UB += OutputFileName;
+    UB += DepInfo[I].DependentToolChain->getInputFilename(Outputs[I]);
   }
   CmdArgs.push_back(TCArgs.MakeArgString(UB));
   CmdArgs.push_back("-unbundle");

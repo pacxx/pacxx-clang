@@ -1060,7 +1060,8 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
       }
     } else{
       if (!F->isDeclaration()) {
-        F->setLinkage(llvm::GlobalValue::LinkageTypes::InternalLinkage);
+        // FIXME: this is to agressive 
+        //   F->setLinkage(llvm::GlobalValue::LinkageTypes::InternalLinkage);
         F->setVisibility(llvm::GlobalValue::VisibilityTypes::DefaultVisibility);
       }
     }

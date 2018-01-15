@@ -2816,8 +2816,10 @@ void CodeGenModule::EmitGlobalVarDefinition(const VarDecl *D,
   // CUDA E.2.4.1 "__shared__ variables cannot have an initialization
   // as part of their declaration."  Sema has already checked for
   // error cases, so we just need to set Init to UndefValue.
-  if (getLangOpts().CUDA && getLangOpts().CUDAIsDevice &&
+  // PACXX MOD: remove all initializers from shared memory variables
+  if ((getLangOpts().CUDA && getLangOpts().CUDAIsDevice &&
       D->hasAttr<CUDASharedAttr>())
+      || (getLangOpts().PACXX && D->hasAttr<PACXXSharedAttr>()))
     Init = llvm::UndefValue::get(getTypes().ConvertType(ASTTy));
   else if (!InitExpr) {
     // This is a tentative definition; tentative definitions are

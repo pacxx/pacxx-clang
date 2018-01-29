@@ -5435,10 +5435,12 @@ auto ValidPACXXKernelLambda(CXXRecordDecl *RDecl, Sema &S) {
       bool VisitDeclRefExpr(DeclRefExpr *expr) {
         if (auto Decl = dyn_cast<VarDecl>(expr->getDecl())) {
           if (Decl->hasGlobalStorage() && !Decl->getType().isConstQualified()) {
-            S.Diag(expr->getSourceRange().getBegin(),
-                   diag::err_pacxx_lambda_uses_non_const_global_var)
-                << Decl->getName() << expr->getSourceRange();
-            hasErrors = true;
+            if (!Decl->hasAttr<PACXXSharedAttr>() && !Decl->hasAttr<PACXXConstantAttr>()){
+              S.Diag(expr->getSourceRange().getBegin(),
+                     diag::err_pacxx_lambda_uses_non_const_global_var)
+                  << Decl->getName() << expr->getSourceRange();
+              hasErrors = true;
+            }
           }
         }
         return true;

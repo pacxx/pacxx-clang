@@ -555,7 +555,7 @@ static void GenOpenCLArgMetadata(const FunctionDecl *FD, llvm::Function *Fn,
   // the same number of values as their are kernel arguments.
 
   const PrintingPolicy &Policy = ASTCtx.getPrintingPolicy();
-  
+
   // MDNode for the kernel argument address space qualifiers.
   SmallVector<llvm::Metadata *, 8> addressQuals;
 
@@ -709,7 +709,7 @@ static void GenOpenCLArgMetadata(const FunctionDecl *FD, llvm::Function *Fn,
 void CodeGenFunction::EmitOpenCLKernelMetadata(const FunctionDecl *FD,
                                                llvm::Function *Fn)
 {
-  if (!FD->hasAttr<OpenCLKernelAttr>() && !FD->hasAttr<PACXXKernelAttr>())
+  if (!FD->hasAttr<OpenCLKernelAttr>())
     return;
 
   llvm::LLVMContext &Context = getLLVMContext();
@@ -760,7 +760,9 @@ void CodeGenFunction::EmitPACXXKernelMetadata(const FunctionDecl *FD,
                                               llvm::Function *Fn)
 {
   if (FD->hasAttr<PACXXKernelAttr>()) {
-
+    llvm::Metadata *attrMDArgs[] = {
+      llvm::MDString::get(Fn->getContext(), FD->getName())};
+    Fn->setMetadata("pacxx.kernel", llvm::MDNode::get(Fn->getContext(), attrMDArgs));
     if (FD->hasAttr<PACXXTargetAttr>()) {
       auto Attr = FD->getAttr<PACXXTargetAttr>();
       if (Attr->args_size() > 0) {
@@ -771,26 +773,6 @@ void CodeGenFunction::EmitPACXXKernelMetadata(const FunctionDecl *FD,
         }
       };
     }
-
-    llvm::Module *M = Fn->getParent();
-    llvm::LLVMContext &Ctx = M->getContext();
-
-    // Get "nvvm.annotations" metadata node
-    llvm::NamedMDNode *MD = M->getOrInsertNamedMetadata("nvvm.annotations");
-
-    // Create !{<func-ref>, metadata !"kernel", i32 1} node
-    llvm::SmallVector<llvm::Metadata *, 3> MDVals;
-    MDVals.push_back(llvm::ConstantAsMetadata::get(Fn));
-    MDVals.push_back(llvm::MDString::get(Ctx, "kernel"));
-    MDVals.push_back(llvm::ConstantAsMetadata::get(
-      llvm::ConstantInt::get(llvm::Type::getInt32Ty(Ctx), 1)));
-
-    // Append metadata to nvvm.annotations
-    MD->addOperand(llvm::MDNode::get(Ctx, MDVals));
-    MDVals.clear();
-    
-    // Emit OpenCL Metadata for SPIR
-    EmitOpenCLKernelMetadata(FD, Fn); 
   }
   if (FD->hasAttr<PACXXReflectionAttr>()) {
     llvm::Module *M = Fn->getParent();

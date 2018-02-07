@@ -1436,8 +1436,6 @@ private:
   void EmitPACXXKernelMetadata(const FunctionDecl *FD, 
                                 llvm::Function *Fn);
 
-
-
 public:
   CodeGenFunction(CodeGenModule &cgm, bool suppressNewContext=false);
   ~CodeGenFunction();

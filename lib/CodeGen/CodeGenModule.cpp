@@ -12,7 +12,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "CodeGenModule.h"
-#include "CodeGenPACXX.h"
 #include "CGBlocks.h"
 #include "CGCUDARuntime.h"
 #include "CGCXXABI.h"
@@ -132,7 +131,7 @@ CodeGenModule::CodeGenModule(ASTContext &C, const HeaderSearchOptions &HSO,
     createOpenCLRuntime();
   if (LangOpts.OpenMP)
     createOpenMPRuntime();
-  if (LangOpts.CUDA || LangOpts.PACXX)
+  if (LangOpts.CUDA)
     createCUDARuntime();
 
   // Enable TBAA unless it's suppressed. ThreadSanitizer needs TBAA even at O0.
@@ -978,7 +977,6 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
   ShouldAddOptNone &= !D->hasAttr<MinSizeAttr>();
   ShouldAddOptNone &= !F->hasFnAttribute(llvm::Attribute::AlwaysInline);
   ShouldAddOptNone &= !D->hasAttr<AlwaysInlineAttr>();
-  ShouldAddOptNone &= !D->hasAttr<PACXXKernelAttr>();
 
   if (ShouldAddOptNone || D->hasAttr<OptimizeNoneAttr>()) {
     B.addAttribute(llvm::Attribute::OptimizeNone);
@@ -1053,21 +1051,10 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
       B.removeAttribute(llvm::Attribute::AlwaysInline);
       F->setLinkage(llvm::GlobalValue::LinkageTypes::ExternalLinkage);
       F->setVisibility(llvm::GlobalValue::VisibilityTypes::DefaultVisibility);
-
-      // add pacxx metadata
-      if (D->hasAttr<PACXXKernelAttr>()) {
-        llvm::NamedMDNode *pacxxMD = F->getParent()->getOrInsertNamedMetadata("pacxx.kernel");
-        llvm::SmallVector<llvm::Metadata *, 1> mdArgs;
-        mdArgs.push_back(llvm::ConstantAsMetadata::get(F));
-        pacxxMD->addOperand(llvm::MDNode::get(F->getContext(), mdArgs));
-        F->getParent()->getOrInsertNamedMetadata("pacxx.kernel." + F->getName().str());
-      }
-    } else{
-      if (!F->isDeclaration()) {
-        // FIXME: this is to agressive 
-        //   F->setLinkage(llvm::GlobalValue::LinkageTypes::InternalLinkage);
-        F->setVisibility(llvm::GlobalValue::VisibilityTypes::DefaultVisibility);
-      }
+      llvm::NamedMDNode *pacxxMD = F->getParent()->getOrInsertNamedMetadata("pacxx.kernel");
+      llvm::SmallVector<llvm::Metadata *, 1> mdArgs;
+      mdArgs.push_back(llvm::ConstantAsMetadata::get(F));
+      pacxxMD->addOperand(llvm::MDNode::get(F->getContext(), mdArgs));
     }
   }
 
@@ -2723,8 +2710,6 @@ LangAS CodeGenModule::GetGlobalVarAddressSpace(const VarDecl *D) {
     else
       return LangAS::cuda_device;
   }
-  else if (LangOpts.PACXX) 
-    AddrSpace = LangAS::Default;
 
   return getTargetCodeGenInfo().getGlobalVarAddressSpace(*this, D);
 }
@@ -2953,6 +2938,7 @@ void CodeGenModule::EmitGlobalVarDefinition(const VarDecl *D,
   //PACXX MOD: Add metadata to identify address spaces
   if (GV && LangOpts.PACXX) {
     if (D->hasAttr<PACXXSharedAttr>()){
+      GV->setExternallyInitialized(true);
       Linkage = llvm::GlobalValue::ExternalLinkage;
     }
     if (D->hasAttr<PACXXConstantAttr>() || D->hasAttr<PACXXDeviceAttr>()){

@@ -660,38 +660,9 @@ static void InitializePredefinedMacros(const TargetInfo &TI,
     InitializeCPlusPlusFeatureTestMacros(LangOpts, Builder);
 
   // PACXX MOD
+  Builder.defineMacro("__PACXX__");
   if (LangOpts.PACXX){
-    Builder.defineMacro("__PACXX__");
     Builder.defineMacro("__device_code__");
-    // we simulate the nvcc to allow compiling CUDA stuff
-    Builder.defineMacro("__PTX__");
-    Builder.defineMacro("__NVPTX__");
-    // some definitions for the C++ STL
-#if defined(__linux__)
-    Builder.defineMacro("unix");
-    Builder.defineMacro("__unix");
-    Builder.defineMacro("__unix__");
-    Builder.defineMacro("linux");
-    Builder.defineMacro("__linux");
-    Builder.defineMacro("__linux__");
-    Builder.defineMacro("__x86_64__");
-    Builder.defineMacro("__gnu_linux__");
-#elif defined(__FreeBSD__)
-    Builder.defineMacro("FreeBSD");
-    Builder.defineMacro("__FreeBSD");
-    Builder.defineMacro("__FreeBSD__");
-#elif defined(__APPLE__)
-    Builder.defineMacro("APPLE");
-    Builder.defineMacro("__APPLE");
-    Builder.defineMacro("__APPLE__");
-    Builder.defineMacro("MACH");
-    Builder.defineMacro("__MACH");
-    Builder.defineMacro("__MACH__");
-#endif
-    Builder.defineMacro("__device_code__");
-
-    Builder.defineMacro("_GNU_SOURCE");
-;
   }
 
   // darwin_constant_cfstrings controls this. This is also dependent

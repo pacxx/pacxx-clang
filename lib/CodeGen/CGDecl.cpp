@@ -424,15 +424,12 @@ void CodeGenFunction::EmitStaticVarDecl(const VarDecl &D,
   // PACXX MOD: Add metadata to identify address spaces
   if (var && getLangOpts().PACXX) {
     if (D.hasAttr<PACXXSharedAttr>()){
-      var->setExternallyInitialized(true);
       var->setMetadata("pacxx.as.shared", llvm::MDNode::get(getLLVMContext(), nullptr));
     }
     if (D.hasAttr<PACXXConstantAttr>()){
-      var->setExternallyInitialized(true);
       var->setMetadata("pacxx.as.constant", llvm::MDNode::get(getLLVMContext(), nullptr));
     }
     if (D.hasAttr<PACXXDeviceAttr>()){
-      var->setExternallyInitialized(true);
       var->setMetadata("pacxx.as.device", llvm::MDNode::get(getLLVMContext(), nullptr));
     }
   }

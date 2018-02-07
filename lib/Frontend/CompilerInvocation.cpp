@@ -2825,8 +2825,6 @@ bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Res,
       LangOpts.PACXX = true;
   }
 
-
-
   // FIXME: Override value name discarding when asan or msan is used because the
   // backend passes depend on the name of the alloca in order to print out
   // names.

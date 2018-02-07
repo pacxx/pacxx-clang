@@ -8486,7 +8486,7 @@ void PACXXABIInfo::computeInfo(CGFunctionInfo &FI) const {
 
 Address PACXXABIInfo::EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
                                 QualType Ty) const {
-  llvm_unreachable("Eighter SPIR nor NVVM IR have support for varargs");
+  llvm_unreachable("PACXX does not have support for varargs");
 }
 
 void PACXXTargetCodeGenInfo::setTargetAttributes(const Decl *D, llvm::GlobalValue *GV,

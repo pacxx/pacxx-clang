@@ -2304,8 +2304,6 @@ class OffloadingActionBuilder final {
                           PartialCompilationArg->getOption().matches(
                               options::OPT_cuda_device_only);
 
-
-
       // Collect all cuda_gpu_arch parameters, removing duplicates.
       std::set<CudaArch> GpuArchs;
       bool Error = false;

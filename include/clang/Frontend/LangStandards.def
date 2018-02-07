@@ -165,12 +165,6 @@ LANGSTANDARD_ALIAS_DEPR(opencl20, "CL2.0")
 LANGSTANDARD(cuda, "cuda", CUDA, "NVIDIA CUDA(tm)",
              LineComment | CPlusPlus | Digraphs)
 
-// PACXX
-//LANGSTANDARD(pacxx, "pacxx", CXX,
-//             "Programming Accelerators with C++",
-//             LineComment | CPlusPlus | CPlusPlus11 | CPlusPlus14 | CPlusPlus1z |
-//             Digraphs | HexFloat)
-
 #undef LANGSTANDARD
 #undef LANGSTANDARD_ALIAS
 #undef LANGSTANDARD_ALIAS_DEPR

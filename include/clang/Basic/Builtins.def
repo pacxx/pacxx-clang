@@ -1474,9 +1474,6 @@ BUILTIN(__pacxx_barrier, "v", "nc")
 
 BUILTIN(__pacxx_backend_id, "i", "nc")
 
-BUILTIN(__pacxx_offload, "v", "nc")
-BUILTIN(__pacxx_synchronize, "v", "nc")
-
 BUILTIN(__pacxx_vec_sqrt , "V*dV*d"  , "nc")
 BUILTIN(__pacxx_vec_sqrtf, "V*fV*f"  , "nc")
 

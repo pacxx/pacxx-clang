@@ -355,6 +355,14 @@ def note_drv_verify_prefix_spelling : Note<
   "-verify prefixes must start with a letter and contain only alphanumeric"
   " characters, hyphens, and underscores">;
 
+def warn_drv_experimental_isel_incomplete : Warning<
+  "-fexperimental-isel support for the '%0' architecture is incomplete">,
+  InGroup<ExperimentalISel>;
+
+def warn_drv_experimental_isel_incomplete_opt : Warning<
+  "-fexperimental-isel support is incomplete for this architecture at the current optimization level">,
+  InGroup<ExperimentalISel>;
+
 def err_pacxx_unsupported_action : Error<
   "PACXX compilation requires emitting of LLVM IR or bitcode (use -emit-llvm)">;
 }

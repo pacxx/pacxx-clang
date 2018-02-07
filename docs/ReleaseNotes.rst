@@ -132,6 +132,11 @@ New Compiler Flags
   difference between the ``-std=c17`` and ``-std=c11`` language modes is the
   value of the ``__STDC_VERSION__`` macro, as C17 is a bug fix release.
 
+- Added the ``-fexperimental-isel`` and ``-fno-experimental-isel`` flags to
+  enable/disable the new GlobalISel instruction selection framework. This
+  feature is enabled by default for AArch64 at the ``-O0`` optimization level.
+  Support for other targets or optimization levels is currently incomplete.
+
 Deprecated Compiler Flags
 -------------------------
 
@@ -162,6 +167,15 @@ Attribute Changes in Clang
   
 - The presence of __attribute__((availability(...))) on a declaration no longer
   implies default visibility for that declaration on macOS.
+
+- Clang now supports configuration files. These are collections of driver
+  options, which can be applied by specifying the configuration file, either
+  using command line option `--config foo.cfg` or encoding it into executable
+  name `foo-clang`. Clang behaves as if the options from this file were inserted
+  before the options specified in command line. This feature is primary intended
+  to facilitate cross compilation. Details can be found in
+  `Clang Compiler User's Manual
+  <http://clang.llvm.org/docs/UsersManual.html#configuration-files>`.
 
 - ...
 
@@ -204,12 +218,54 @@ Objective-C Language Changes in Clang
 OpenCL C Language Changes in Clang
 ----------------------------------
 
-...
+
+- Added subgroup builtins to enqueue kernel support.
+
+- Added CL2.0 atomics as Clang builtins that now accept
+  an additional memory scope parameter propagated to atomic IR instructions
+  (this is to align with the corresponding change in LLVM IR) (see `spec s6.13.11.4
+  <https://www.khronos.org/registry/OpenCL/specs/opencl-2.0-openclc.pdf#107>`_).
+
+- Miscellaneous fixes in the CL header.
+
+- Allow per target selection of address space during CodeGen of certain OpenCL types.
+  Default target implementation is provided mimicking old behavior.
+
+- Macro ``__IMAGE_SUPPORT__`` is now automatically added (as per `spec s6.10
+  <https://www.khronos.org/registry/OpenCL/specs/opencl-2.0-openclc.pdf#55>`_).
+
+- Added ``cl_intel_subgroups`` and ``cl_intel_subgroups_short`` extensions.
+
+- All function calls are marked by `the convergent attribute
+  <https://clang.llvm.org/docs/AttributeReference.html#convergent-clang-convergent>`_
+  to prevent optimizations that break SPMD program semantics. This will be removed
+  by LLVM passes if it can be proved that the function does not use convergent
+  operations.
+
+- Create a kernel wrapper for enqueued blocks, which simplifies enqueue support by
+  providing common functionality.
+
+- Added private address space explicitly in AST and refactored address space support
+  with several simplifications and bug fixes (`PR33419 <https://llvm.org/pr33419>`_
+  and `PR33420 <https://llvm.org/pr33420>`_).
+
+- OpenCL now allows functions with empty parameters to be treated as if they had a
+  void parameter list (inspired from C++ support). OpenCL C spec update to follow.
+
+- General miscellaneous refactoring and cleanup of blocks support for OpenCL to
+  remove unused parts inherited from Objective C implementation.
+
+- Miscellaneous improvements in vector diagnostics.
+
+- Added half float load and store builtins without enabling half as a legal type
+  (``__builtin_store_half for double``, ``__builtin_store_halff`` for double,
+  ``__builtin_load_half for double``, ``__builtin_load_halff`` for float).
+
 
 OpenMP Support in Clang
 ----------------------------------
 
-- Added options `-f[no]-openmp-simd` that support code emission only foe OpenMP
+- Added options `-f[no]-openmp-simd` that support code emission only for OpenMP
   SIMD-based directives, like `#pragma omp simd`, `#pragma omp parallel for simd`
   etc. The code is emitted only for simd-based part of the combined directives
   and clauses.
@@ -221,6 +277,13 @@ OpenMP Support in Clang
 
 - Added support for `reduction`-based clauses on `task`-based directives from
   upcoming OpenMP 5.0.
+
+- The LLVM OpenMP runtime `libomp` now supports the OpenMP Tools Interface (OMPT)
+  on x86, x86_64, AArch64, and PPC64 on Linux, Windows, and macOS. If you observe
+  a measurable performance impact on one of your applications without a tool
+  attached, please rebuild the runtime library with `-DLIBOMP_OMPT_SUPPORT=OFF` and
+  file a bug at `LLVM's Bugzilla <https://bugs.llvm.org/>`_ or send a message to the
+  `OpenMP development list <http://lists.llvm.org/cgi-bin/mailman/listinfo/openmp-dev>`_.
 
 Internal API Changes
 --------------------

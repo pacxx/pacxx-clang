@@ -1196,7 +1196,8 @@ public:
     PrettyFunction,
     /// \brief The same as PrettyFunction, except that the
     /// 'virtual' keyword is omitted for virtual member functions.
-    PrettyFunctionNoVirtual
+    PrettyFunctionNoVirtual,
+    PACXXFunction // same as FuncDName but for PACXX
   };
 
 private:

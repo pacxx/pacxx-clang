@@ -44,10 +44,10 @@ struct CatchTypeInfo;
 class CGCXXABI {
 protected:
   CodeGenModule &CGM;
-  std::unique_ptr<MangleContext> MangleCtx;
+  MangleContext &MangleCtx;
 
   CGCXXABI(CodeGenModule &CGM)
-    : CGM(CGM), MangleCtx(CGM.getContext().createMangleContext()) {}
+    : CGM(CGM), MangleCtx(*CGM.getContext().getMangleContext()) {}
 
 protected:
   ImplicitParamDecl *getThisDecl(CodeGenFunction &CGF) {
@@ -95,7 +95,7 @@ public:
 
   /// Gets the mangle context.
   MangleContext &getMangleContext() {
-    return *MangleCtx;
+    return MangleCtx;
   }
 
   /// Returns true if the given constructor or destructor is one of the

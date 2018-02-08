@@ -26,11 +26,11 @@ using namespace clang;
 using namespace clang::index;
 
 struct CodegenNameGenerator::Implementation {
-  std::unique_ptr<MangleContext> MC;
+  MangleContext* MC;
   llvm::DataLayout DL;
 
   Implementation(ASTContext &Ctx)
-    : MC(Ctx.createMangleContext()),
+    : MC(Ctx.getMangleContext()),
       DL(Ctx.getTargetInfo().getDataLayout()) {}
 
   bool writeName(const Decl *D, raw_ostream &OS) {
@@ -106,7 +106,7 @@ struct CodegenNameGenerator::Implementation {
     const NamedDecl *ND = cast<NamedDecl>(D);
 
     ASTContext &Ctx = ND->getASTContext();
-    std::unique_ptr<MangleContext> M(Ctx.createMangleContext());
+    MangleContext* M = Ctx.getMangleContext();
 
     std::vector<std::string> Manglings;
 

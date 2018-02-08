@@ -620,6 +620,7 @@ class CastExpressionIdValidator : public CorrectionCandidateCallback {
 /// [MS]    '__FUNCDNAME__'
 /// [MS]    'L__FUNCTION__'
 /// [GNU]   '__PRETTY_FUNCTION__'
+/// [PACXX] '__PACXX_FUNCTION__'
 /// [GNU]   '(' compound-statement ')'
 /// [GNU]   '__builtin_va_arg' '(' assignment-expression ',' type-name ')'
 /// [GNU]   '__builtin_offsetof' '(' type-name ',' offsetof-member-designator')'
@@ -1060,6 +1061,7 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
   case tok::kw___FUNCSIG__:     // primary-expression: __FUNCSIG__ [MS]
   case tok::kw_L__FUNCTION__:   // primary-expression: L__FUNCTION__ [MS]
   case tok::kw___PRETTY_FUNCTION__:  // primary-expression: __P..Y_F..N__ [GNU]
+  case tok::kw___PACXX_FUNCTION__:  // primary-expression: __P..X_F..N__ [PACXX]
     Res = Actions.ActOnPredefinedExpr(Tok.getLocation(), SavedKind);
     ConsumeToken();
     break;

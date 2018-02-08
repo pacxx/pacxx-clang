@@ -482,6 +482,8 @@ StringRef PredefinedExpr::getIdentTypeName(PredefinedExpr::IdentType IT) {
     return "L__FUNCTION__";
   case PrettyFunction:
     return "__PRETTY_FUNCTION__";
+  case PACXXFunction:
+    return "__PACXX_FUNCTION__";
   case FuncSig:
     return "__FUNCSIG__";
   case PrettyFunctionNoVirtual:
@@ -495,11 +497,9 @@ StringRef PredefinedExpr::getIdentTypeName(PredefinedExpr::IdentType IT) {
 std::string PredefinedExpr::ComputeName(IdentType IT, const Decl *CurrentDecl) {
   ASTContext &Context = CurrentDecl->getASTContext();
 
-  if (IT == PredefinedExpr::FuncDName) {
+  if (IT == PredefinedExpr::FuncDName || IT == PredefinedExpr::PACXXFunction) {
     if (const NamedDecl *ND = dyn_cast<NamedDecl>(CurrentDecl)) {
-      std::unique_ptr<MangleContext> MC;
-      MC.reset(Context.createMangleContext());
-
+      auto MC = Context.getMangleContext();
       if (MC->shouldMangleDeclName(ND)) {
         SmallString<256> Buffer;
         llvm::raw_svector_ostream Out(Buffer);

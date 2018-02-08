@@ -9558,11 +9558,21 @@ MangleContext *ASTContext::createMangleContext() {
   case TargetCXXABI::iOS64:
   case TargetCXXABI::WebAssembly:
   case TargetCXXABI::WatchOS:
-    return ItaniumMangleContext::create(*this, getDiagnostics());
+    if (!MContext)
+      MContext.reset(ItaniumMangleContext::create(*this, getDiagnostics()));
+    return MContext.get();
   case TargetCXXABI::Microsoft:
-    return MicrosoftMangleContext::create(*this, getDiagnostics());
+    if (!MContext)
+      MContext.reset(MicrosoftMangleContext::create(*this, getDiagnostics()));
+    return MContext.get();
   }
   llvm_unreachable("Unsupported ABI");
+}
+
+MangleContext *ASTContext::getMangleContext(){
+  if (!MContext)
+    return createMangleContext(); 
+  return MContext.get();
 }
 
 CXXABI::~CXXABI() = default;

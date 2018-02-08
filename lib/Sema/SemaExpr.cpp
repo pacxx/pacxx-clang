@@ -3066,6 +3066,7 @@ ExprResult Sema::ActOnPredefinedExpr(SourceLocation Loc, tok::TokenKind Kind) {
   case tok::kw___FUNCSIG__: IT = PredefinedExpr::FuncSig; break; // [MS]
   case tok::kw_L__FUNCTION__: IT = PredefinedExpr::LFunction; break;
   case tok::kw___PRETTY_FUNCTION__: IT = PredefinedExpr::PrettyFunction; break;
+  case tok::kw___PACXX_FUNCTION__: IT = PredefinedExpr::PACXXFunction; break;
   }
 
   return BuildPredefinedExpr(Loc, IT);

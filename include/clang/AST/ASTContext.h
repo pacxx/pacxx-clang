@@ -2149,6 +2149,7 @@ public:
   VTableContextBase *getVTableContext();
 
   MangleContext *createMangleContext();
+  MangleContext *getMangleContext();
 
   void DeepCollectObjCIvars(const ObjCInterfaceDecl *OI, bool leafClass,
                             SmallVectorImpl<const ObjCIvarDecl*> &Ivars) const;
@@ -2813,6 +2814,8 @@ private:
   std::unique_ptr<ParentMapOtherNodes> OtherParents;
 
   std::unique_ptr<VTableContextBase> VTContext;
+
+  std::unique_ptr<MangleContext> MContext;
 
   void ReleaseDeclContextMaps();
   void ReleaseParentMapEntries();

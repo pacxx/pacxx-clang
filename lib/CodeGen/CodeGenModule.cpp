@@ -1048,6 +1048,7 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
   if (LangOpts.PACXX){
     if (D->hasAttr<PACXXKernelAttr>() || D->hasAttr<PACXXReflectionAttr>()) {
       B.addAttribute(llvm::Attribute::NoInline);
+      B.addAttribute(llvm::Attribute::OptimizeNone);
       B.removeAttribute(llvm::Attribute::AlwaysInline);
       F->setLinkage(llvm::GlobalValue::LinkageTypes::ExternalLinkage);
       F->setVisibility(llvm::GlobalValue::VisibilityTypes::DefaultVisibility);
@@ -2436,13 +2437,16 @@ CodeGenModule::GetOrCreateLLVMGlobal(StringRef MangledName,
     if (D->hasAttr<PACXXSharedAttr>()){
       GV->setExternallyInitialized(true);
       GV->setLinkage(llvm::GlobalValue::ExternalLinkage);
-      GV->setMetadata("pacxx.as.shared", llvm::MDNode::get(getLLVMContext(), nullptr)); 
+      if (!GV->getMetadata("pacxx.as.shared"))
+        GV->setMetadata("pacxx.as.shared", llvm::MDNode::get(getLLVMContext(), nullptr)); 
     }
     if (D->hasAttr<PACXXConstantAttr>()){
-      GV->setMetadata("pacxx.as.constant", llvm::MDNode::get(getLLVMContext(), nullptr)); 
+      if (!GV->getMetadata("pacxx.as.constant"))
+        GV->setMetadata("pacxx.as.constant", llvm::MDNode::get(getLLVMContext(), nullptr)); 
     }
     if (D->hasAttr<PACXXDeviceAttr>()){
-      GV->setMetadata("pacxx.as.device", llvm::MDNode::get(getLLVMContext(), nullptr)); 
+      if (!GV->getMetadata("pacxx.as.device"))
+        GV->setMetadata("pacxx.as.device", llvm::MDNode::get(getLLVMContext(), nullptr)); 
     }
   } 
  

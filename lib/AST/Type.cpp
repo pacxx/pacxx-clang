@@ -2708,6 +2708,7 @@ StringRef FunctionType::getNameForCallConv(CallingConv CC) {
   case CC_Swift: return "swiftcall";
   case CC_PreserveMost: return "preserve_most";
   case CC_PreserveAll: return "preserve_all";
+  case CC_PACXXKernel: return "pacxx_kernel";
   }
 
   llvm_unreachable("Invalid calling convention.");

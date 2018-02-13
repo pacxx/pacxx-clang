@@ -424,13 +424,16 @@ void CodeGenFunction::EmitStaticVarDecl(const VarDecl &D,
   // PACXX MOD: Add metadata to identify address spaces
   if (var && getLangOpts().PACXX) {
     if (D.hasAttr<PACXXSharedAttr>()){
-      var->setMetadata("pacxx.as.shared", llvm::MDNode::get(getLLVMContext(), nullptr));
+      if (!var->getMetadata("pacxx.as.shared"))
+        var->setMetadata("pacxx.as.shared", llvm::MDNode::get(getLLVMContext(), nullptr));
     }
     if (D.hasAttr<PACXXConstantAttr>()){
-      var->setMetadata("pacxx.as.constant", llvm::MDNode::get(getLLVMContext(), nullptr));
+      if (!var->getMetadata("pacxx.as.constant"))
+        var->setMetadata("pacxx.as.constant", llvm::MDNode::get(getLLVMContext(), nullptr));
     }
     if (D.hasAttr<PACXXDeviceAttr>()){
-      var->setMetadata("pacxx.as.device", llvm::MDNode::get(getLLVMContext(), nullptr));
+      if (!var->getMetadata("pacxx.as.device"))
+        var->setMetadata("pacxx.as.device", llvm::MDNode::get(getLLVMContext(), nullptr));
     }
   }
 
@@ -1135,12 +1138,6 @@ CodeGenFunction::EmitAutoVarAlloca(const VarDecl &D) {
 
   setAddrOfLocalVar(&D, address);
   emission.Addr = address;
-
- /* if (D.hasAttr<PACXXSharedAttr>())
-  {
-    if (auto Alloca = dyn_cast<llvm::AllocaInst>(address.getPointer()))
-      Alloca->setMetadata("pacxx.as.shared", llvm::MDNode::get(getLLVMContext(), nullptr));
-  }*/
 
   // Emit debug info for local var declaration.
   if (HaveInsertPoint())

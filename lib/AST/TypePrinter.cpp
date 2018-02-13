@@ -778,6 +778,7 @@ void TypePrinter::printFunctionAfter(const FunctionType::ExtInfo &Info,
       break;
     case CC_SpirFunction:
     case CC_OpenCLKernel:
+    case CC_PACXXKernel:
       // Do nothing. These CCs are not available as attributes.
       break;
     case CC_Swift:

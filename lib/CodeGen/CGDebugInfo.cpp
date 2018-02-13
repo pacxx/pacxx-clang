@@ -994,6 +994,7 @@ static unsigned getDwarfCC(CallingConv CC) {
   case CC_PreserveMost:
   case CC_PreserveAll:
   case CC_X86RegCall:
+  case CC_PACXXKernel:
     return 0;
   }
   return 0;

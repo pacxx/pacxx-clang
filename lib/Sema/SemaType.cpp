@@ -3316,6 +3316,17 @@ getCCForDeclaratorChunk(Sema &S, Declarator &D,
       }
     }
   }
+  
+  // Infere calling convention for PACXX kernels.
+  if (S.getLangOpts().PACXX) {
+    for (const AttributeList *Attr = D.getDeclSpec().getAttributes().getList();
+         Attr; Attr = Attr->getNext()) {
+      if (Attr->getKind() == AttributeList::AT_PACXXKernel) {
+        CC = CC_PACXXKernel;
+        break;
+      }
+    }
+  }
 
   return CC;
 }

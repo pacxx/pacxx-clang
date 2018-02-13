@@ -248,6 +248,7 @@ namespace clang {
     CC_Swift,        // __attribute__((swiftcall))
     CC_PreserveMost, // __attribute__((preserve_most))
     CC_PreserveAll,  // __attribute__((preserve_all))
+    CC_PACXXKernel,  // inferred for PACXX kernels
   };
 
   /// \brief Checks whether the given calling convention supports variadic

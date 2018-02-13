@@ -8427,7 +8427,7 @@ void XCoreTargetCodeGenInfo::emitTargetMD(const Decl *D, llvm::GlobalValue *GV,
 namespace {
 class PACXXABIInfo : public ABIInfo {
 public:
-  PACXXABIInfo(CodeGenTypes &CGT) : ABIInfo(CGT) {}
+  PACXXABIInfo(CodeGenTypes &CGT, const ABIInfo& HostABI) : ABIInfo(CGT), HostABI(HostABI) {}
 
   ABIArgInfo classifyReturnType(QualType RetTy) const;
   ABIArgInfo classifyArgumentType(QualType Ty) const;
@@ -8435,18 +8435,22 @@ public:
   void computeInfo(CGFunctionInfo &FI) const override;
   Address EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
                     QualType Ty) const override;
+
+  const ABIInfo& HostABI; 
 };
 
 class PACXXTargetCodeGenInfo : public TargetCodeGenInfo {
 public:
-  PACXXTargetCodeGenInfo(CodeGenTypes &CGT)
-      : TargetCodeGenInfo(new PACXXABIInfo(CGT)) {}
+  PACXXTargetCodeGenInfo(CodeGenTypes &CGT, TargetCodeGenInfo* Host)
+      : TargetCodeGenInfo(new PACXXABIInfo(CGT, Host->getABIInfo())) {
+        HostTCGI.reset(Host);
+      }
 
   void setTargetAttributes(const Decl *D, llvm::GlobalValue *GV,
                            CodeGen::CodeGenModule &CGM,
                            ForDefinition_t IsForDefinition) const override;
 
-
+  std::unique_ptr<TargetCodeGenInfo> HostTCGI;
 };
 
 ABIArgInfo PACXXABIInfo::classifyReturnType(QualType RetTy) const {
@@ -8471,17 +8475,21 @@ ABIArgInfo PACXXABIInfo::classifyArgumentType(QualType Ty) const {
 }
 
 void PACXXABIInfo::computeInfo(CGFunctionInfo &FI) const {
+  auto CC = FI.getExtInfo().getCC();
+    if (CC == CC_PACXXKernel){
+    if (!getCXXABI().classifyReturnType(FI))
+      FI.getReturnInfo() = classifyReturnType(FI.getReturnType());
+    for (auto &I : FI.arguments())
+      I.info = classifyArgumentType(I.type);
 
-  if (!getCXXABI().classifyReturnType(FI))
-    FI.getReturnInfo() = classifyReturnType(FI.getReturnType());
-  for (auto &I : FI.arguments())
-    I.info = classifyArgumentType(I.type);
+    // Always honor user-specified calling convention.
+    if (FI.getCallingConvention() != llvm::CallingConv::C)
+      return;
 
-  // Always honor user-specified calling convention.
-  if (FI.getCallingConvention() != llvm::CallingConv::C)
-    return;
-
-  FI.setEffectiveCallingConvention(getRuntimeCC());
+    FI.setEffectiveCallingConvention(getRuntimeCC());
+  }
+  else 
+    HostABI.computeInfo(FI);
 }
 
 Address PACXXABIInfo::EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
@@ -8490,7 +8498,9 @@ Address PACXXABIInfo::EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
 }
 
 void PACXXTargetCodeGenInfo::setTargetAttributes(const Decl *D, llvm::GlobalValue *GV,
-                           CodeGen::CodeGenModule &CGM, ForDefinition_t IsForDefinition) const {}
+                           CodeGen::CodeGenModule &CGM, ForDefinition_t IsForDefinition) const {
+    HostTCGI->setTargetAttributes(D, GV, CGM, IsForDefinition);
+}
 
 
 }
@@ -8868,12 +8878,13 @@ const TargetCodeGenInfo &CodeGenModule::getTargetCodeGenInfo() {
 
   // Helper to set the unique_ptr while still keeping the return value.
   auto SetCGInfo = [&](TargetCodeGenInfo *P) -> const TargetCodeGenInfo & {
-    this->TheTargetCodeGenInfo.reset(P);
-    return *P;
+    if (getLangOpts().PACXX){
+      this->TheTargetCodeGenInfo.reset(new PACXXTargetCodeGenInfo(Types, P));
+    }
+    else 
+      this->TheTargetCodeGenInfo.reset(P);
+    return *this->TheTargetCodeGenInfo.get();
   };
-
-  if (getLangOpts().PACXX)
-    return SetCGInfo(new PACXXTargetCodeGenInfo(Types));
 
   const llvm::Triple &Triple = getTarget().getTriple();
   switch (Triple.getArch()) {

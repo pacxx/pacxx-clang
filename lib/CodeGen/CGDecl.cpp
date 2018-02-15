@@ -425,15 +425,15 @@ void CodeGenFunction::EmitStaticVarDecl(const VarDecl &D,
   if (var && getLangOpts().PACXX) {
     if (D.hasAttr<PACXXSharedAttr>()){
       if (!var->getMetadata("pacxx.as.shared"))
-        var->setMetadata("pacxx.as.shared", llvm::MDNode::get(getLLVMContext(), nullptr));
+        var->setMetadata("pacxx.as.shared", llvm::MDNode::get(getLLVMContext(), {}));
     }
     if (D.hasAttr<PACXXConstantAttr>()){
       if (!var->getMetadata("pacxx.as.constant"))
-        var->setMetadata("pacxx.as.constant", llvm::MDNode::get(getLLVMContext(), nullptr));
+        var->setMetadata("pacxx.as.constant", llvm::MDNode::get(getLLVMContext(), {}));
     }
     if (D.hasAttr<PACXXDeviceAttr>()){
       if (!var->getMetadata("pacxx.as.device"))
-        var->setMetadata("pacxx.as.device", llvm::MDNode::get(getLLVMContext(), nullptr));
+        var->setMetadata("pacxx.as.device", llvm::MDNode::get(getLLVMContext(), {}));
     }
   }
 

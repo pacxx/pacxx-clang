@@ -2438,15 +2438,15 @@ CodeGenModule::GetOrCreateLLVMGlobal(StringRef MangledName,
       GV->setExternallyInitialized(true);
       GV->setLinkage(llvm::GlobalValue::ExternalLinkage);
       if (!GV->getMetadata("pacxx.as.shared"))
-        GV->setMetadata("pacxx.as.shared", llvm::MDNode::get(getLLVMContext(), nullptr)); 
+        GV->setMetadata("pacxx.as.shared", llvm::MDNode::get(getLLVMContext(), {})); 
     }
     if (D->hasAttr<PACXXConstantAttr>()){
       if (!GV->getMetadata("pacxx.as.constant"))
-        GV->setMetadata("pacxx.as.constant", llvm::MDNode::get(getLLVMContext(), nullptr)); 
+        GV->setMetadata("pacxx.as.constant", llvm::MDNode::get(getLLVMContext(), {})); 
     }
     if (D->hasAttr<PACXXDeviceAttr>()){
       if (!GV->getMetadata("pacxx.as.device"))
-        GV->setMetadata("pacxx.as.device", llvm::MDNode::get(getLLVMContext(), nullptr)); 
+        GV->setMetadata("pacxx.as.device", llvm::MDNode::get(getLLVMContext(), {})); 
     }
   } 
  

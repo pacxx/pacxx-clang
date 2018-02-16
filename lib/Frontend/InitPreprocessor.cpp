@@ -661,9 +661,6 @@ static void InitializePredefinedMacros(const TargetInfo &TI,
 
   // PACXX MOD
   Builder.defineMacro("__PACXX__");
-  if (LangOpts.PACXX){
-    Builder.defineMacro("__device_code__");
-  }
 
   // darwin_constant_cfstrings controls this. This is also dependent
   // on other things like the runtime I believe.  This is set even for C code.
